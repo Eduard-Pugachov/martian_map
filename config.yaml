@@ -1,0 +1,55 @@
+# Martian Map config. All tunable numbers live here (CLAUDE.md conventions).
+# Values marked ASSUMPTION are placeholders to tune or justify before the demo.
+
+paths:
+  raw: data/raw
+  processed: data/processed
+  checkpoints: checkpoints
+  dtm_raw: data/raw/JEZ_hirise_soc_006_DTM_MOLAtopography_DeltaGeoid_1m_Eqc_latTs0_lon0_blend40.tif
+  dtm_aoi: data/processed/dtm_aoi.tif
+  ctx_aoi: data/processed/ctx_aoi.tif
+
+aoi:
+  # ASSUMPTION: ~10x10 km around the Perseverance landing site / delta front.
+  # Fill in projected (Eqc) bounds in metres once the DTM is downloaded.
+  crs: null
+  bounds: {left: null, bottom: null, right: null, top: null}
+
+grid:
+  dtm_pixel_size_m: 1.0
+  route_cell_size_m: 5.0   # downsample for fast routing (PLAN §3C: 5-10 m)
+
+ai4mars:
+  classes: {0: soil, 1: bedrock, 2: sand, 3: big_rock}
+  ignore_index: 255
+  image_size: 512           # 256 if GPU time is tight
+  # ASSUMPTION: big rock is rare (~3% of pixels), weight it up. Recompute from data.
+  class_weights: [1.0, 1.0, 1.5, 4.0]
+  hazard_weights: {sand: 1.0, big_rock: 1.5}   # ASSUMPTION: ground hazard score
+
+domars:
+  patch_size: 200
+  stride: 100               # sliding-window stride (50-100 px)
+  classes: [aec, ael, cli, rid, fsf, sfe, fsg, fse, fss, cra, sfx, mix, rou, smo, tex]
+
+cost:
+  # slope cost = 1 + (slope / slope_scale_deg) ** 2, impassable above max_slope_deg
+  slope_scale_deg: 10.0
+  max_slope_deg: 25.0       # ASSUMPTION: walking-EVA limit
+  # ASSUMPTION: landform multipliers (null = impassable). Codes per DoMars16k.
+  landform_multiplier:
+    smo: 1.0   # smooth terrain
+    tex: 1.3   # textured terrain
+    mix: 1.5   # mixed terrain
+    rou: 2.5   # rough terrain
+    cra: 2.0   # crater
+    sfx: 2.0   # crater field
+    aec: 4.0   # aeolian curved (dunes)
+    ael: 4.0   # aeolian straight (dunes)
+    cli: null  # cliff -> impassable
+    fsf: 3.0   # gullies
+    sfe: 3.0   # mass wasting
+    rid: 1.5   # ridge
+    fsg: 1.5   # channel
+    fse: 1.5   # mounds
+    fss: 2.0   # slope streaks

@@ -1,0 +1,24 @@
+# Data (never commit)
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+# Checkpoints: gitignored except final small weights (force-add those)
+checkpoints/*
+!checkpoints/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# Gradio / misc
+.gradio/
+flagged/
+.DS_Store
+.vscode/

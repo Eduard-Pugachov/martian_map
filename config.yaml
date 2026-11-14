@@ -5,8 +5,12 @@ paths:
   raw: data/raw
   processed: data/processed
   checkpoints: checkpoints
-  dtm_raw: data/raw/JEZ_hirise_soc_006_DTM_MOLAtopography_DeltaGeoid_1m_Eqc_latTs0_lon0_blend40.tif
+  dtm_raw: data/raw/jezero/JEZ_hirise_soc_006_DTM_MOLAtopography_DeltaGeoid_1m_Eqc_latTs0_lon0_blend40.tif
+  ortho_raw: data/raw/jezero/JEZ_hirise_soc_006_orthoMosaic_25cm_Eqc_latTs0_lon0_first.tif
+  ctx_raw: data/raw/jezero/JEZ_ctx_B_soc_008_orthoMosaic_6m_Eqc_latTs0_lon0.tif
+  domars_raw: data/raw/domars16k
   dtm_aoi: data/processed/dtm_aoi.tif
+  ortho_1m: data/processed/ortho_1m.tif      # 25 cm ortho area-averaged onto the DTM grid
   ctx_aoi: data/processed/ctx_aoi.tif
 
 aoi:

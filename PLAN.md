@@ -2,8 +2,7 @@
 **NASA Space Apps 2026 · Challenge: "Interplanetary Survival Guide: Martian Map"**
 Hackathon: Sat Nov 14 – Sun Nov 15, 2026 (submit by Nov 15, 11:59 PM local time; check your local event)
 
-> **No project code before Nov 14** until the local lead confirms the pre-event rules. Before then, only the work in
-> the "Pre-event prep" checklist (§5) is done. The repo currently holds docs, `config.yaml` and `requirements.txt` only.
+> **Status (Nov 13):** coding has started. Env: Python 3.13 venv (`.venv`, CUDA torch). Core data downloaded to `data/raw/`.
 
 ---
 
@@ -61,8 +60,8 @@ DoMars16k's authors already ran a Jezero landform analysis, so we have something
 | # | Dataset | Use | Access |
 |---|---|---|---|
 | 1 | **Mars 2020 TRN HiRISE DTM mosaic** (USGS, 1 m/px) | Slope → hazard labels; DTM-mode routing | ~1.8 GB GeoTIFF: `https://planetarymaps.usgs.gov/mosaic/mars2020_trn/HiRISE/JEZ_hirise_soc_006_DTM_MOLAtopography_DeltaGeoid_1m_Eqc_latTs0_lon0_blend40.tif` |
-| 2 | **Mars 2020 TRN HiRISE orthomosaic** (USGS, 25 cm/px) | U-Net input | ~3.2 GB GeoTIFF, same USGS TRN product family. **Exact URL not yet confirmed** (prep task). |
-| 3 | **CTX imagery of Jezero** (~6 m/px) | Input for landform map | USGS Jezero landing-site products (CTX orthomosaic) at astrogeology.usgs.gov, or Murray Lab global CTX mosaic tiles |
+| 2 | **Mars 2020 TRN HiRISE orthomosaic** (USGS, 25 cm/px) | U-Net input | **7.4 GB** GeoTIFF (doi:10.5066/P9QJDP48): `https://planetarymaps.usgs.gov/mosaic/mars2020_trn/HiRISE/JEZ_hirise_soc_006_orthoMosaic_25cm_Eqc_latTs0_lon0_first.tif` |
+| 3 | **Mars 2020 TRN CTX orthomosaic** (6 m/px) | Input for landform map | 36 MB GeoTIFF (doi:10.5066/P9GV1ND3): `https://planetarymaps.usgs.gov/mosaic/mars2020_trn/CTX/JEZ_ctx_B_soc_008_orthoMosaic_6m_Eqc_latTs0_lon0.tif` |
 | 4 | **DoMars16k** (TU Dortmund) | Train/fine-tune landform classifier | Zenodo 4291940: `data.zip` (~128 MB) + `models.zip` (pretrained) · github.com/thowilh/geomars |
 
 ### Optional
@@ -220,7 +219,7 @@ martian_map/
 └── tests/   # hazard labels, splits/leakage, costmap, route, route comparison, AI4Mars mask merge
 ```
 
-Data cropping before the event uses **GDAL command-line tools** (`gdal_translate -projwin`, `gdalwarp`), not project code.
+Raster cropping/resampling uses rasterio (no GDAL command-line tools are installed).
 
 ---
 
@@ -229,15 +228,16 @@ Data cropping before the event uses **GDAL command-line tools** (`gdal_translate
 ### Pre-event prep (before Nov 14: allowed work only)
 - [ ] **Confirm the rules on pre-event code with the local lead** (and whether an empty repo skeleton counts)
 - [ ] Read the official challenge statement + resources and the **Nov 13 participant guides**; update the §0 wording
-- [ ] Environment: Python venv (decide 3.11 vs. 3.13), install `requirements.txt`; HF, Colab and Kaggle accounts with GPU access
+- [ ] Environment: Python 3.13 venv with CUDA torch, install `requirements.txt`; HF, Colab and Kaggle accounts with GPU access
 - [ ] Downloads:
   - [ ] HiRISE TRN DTM (1.8 GB)
-  - [ ] HiRISE TRN orthomosaic: **find the exact URL**, check it covers the DTM (`gdalinfo`)
+  - [ ] HiRISE TRN orthomosaic (7.4 GB; URL in §2): check it covers the DTM (`rio info`)
   - [ ] CTX of Jezero
   - [ ] DoMars16k `data.zip` + `models.zip`
   - [ ] (optional) AI4Mars; one small second-site DTM + ortho pair from USGS STAC
-- [ ] Crop the DTM, ortho and CTX to the overlap region / AOI with `gdal_translate` / `gdalwarp` → `data/processed/`
-- [ ] Check with `gdalinfo` whether the DTM mosaic has a footprint/mask layer for blend zones and seams
+- [ ] Crop the DTM and CTX to the overlap region / AOI, and resample the ortho to 1 m, with rasterio → `data/processed/`
+  (no GDAL CLI installed); then delete the raw 25 cm ortho if disk is tight
+- [ ] Check with `rio info` whether the DTM mosaic has a footprint/mask layer for blend zones and seams
 - [ ] Skim the DoMars16k paper (methods + Jezero figure); optionally AI4Mars
 
 ### Saturday Nov 14

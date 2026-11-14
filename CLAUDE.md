@@ -13,10 +13,10 @@ Full plan: **PLAN.md** (read the relevant section before coding).
 - **E/F. App:** Gradio Blocks on Hugging Face Spaces: Mission Map (with DTM-free toggle), How it works, optional Ground view.
 - **G. Ground-view U-Net (optional):** AI4Mars soil / bedrock / sand / big rock, a small demo tab only.
 
-## No code before Nov 14
-Until the hackathon starts (Nov 14) and the local lead confirms the pre-event rules, **do not write project code,
-scripts or notebooks**. Only docs, `config.yaml` and `requirements.txt` live in the repo. Pre-event data cropping uses
-GDAL command-line tools, not project code.
+## Status
+Coding has started (Eddie's call, Nov 13). Local env: `.venv` (Python 3.13, CUDA torch) in the repo root, gitignored.
+Raw data lives in `data/raw/jezero/` and `data/raw/domars16k/`. C: is nearly full (~27 GB free before downloads):
+check free space before writing large files, and prefer deleting the raw 25 cm ortho once the 1 m version exists.
 
 ## Priorities (also the cut order, from the bottom)
 (a) DTM slope + A* route → (b) DoMars16k landform layer → (c) hazard U-Net → (d) DTM-free comparison →
@@ -27,7 +27,7 @@ GDAL command-line tools, not project code.
 Submission due Sun Nov 15, 2026, 11:59 PM local. A working demo matters more than elegance. Prefer simple, proven libraries.
 
 ## Conventions
-- Python 3.11 (pending a 3.11 vs. 3.13 decision). Package code lives in `src/martianmap/`. Notebooks are for exploration only.
+- Python 3.13. Package code lives in `src/martianmap/`. Notebooks are for exploration only.
 - All tunable numbers (AOI, split blocks, buffer, slope baseline, hazard thresholds, cost weights, paths, class maps)
   go in `config.yaml`, never hard-coded.
 - Type hints + short docstrings. Keep functions small and pure where possible.
@@ -39,8 +39,11 @@ Submission due Sun Nov 15, 2026, 11:59 PM local. A working demo matters more tha
 ## Data facts
 - HiRISE TRN DTM: 1 m/px GeoTIFF, equirectangular (Mars sphere). It's a mosaic blended with MOLA ("blend40"):
   mask no-data, blend zones and seams between source DTMs as 255 (ignore).
-- HiRISE TRN orthomosaic: 25 cm/px, same projection. Resample (area average) onto the DTM's 1 m grid with rasterio;
-  grids may not align exactly, but no feature matching is needed. Exact URL still to be confirmed.
+- HiRISE TRN orthomosaic: `JEZ_hirise_soc_006_orthoMosaic_25cm_Eqc_latTs0_lon0_first.tif` (7.4 GB, same `soc_006`
+  production as the DTM). Resample (area average) onto the DTM's 1 m grid with rasterio, reading in windows (never
+  load the full 25 cm raster into memory); grids may not align exactly, but no feature matching is needed.
+- CTX: `JEZ_ctx_B_soc_008_orthoMosaic_6m_Eqc_latTs0_lon0.tif` (36 MB, 6 m/px).
+- No GDAL command-line tools are installed; use rasterio (Python or its `rio` CLI) for raster work.
 - Slope: Gaussian smooth (σ = 1 px) + Horn 3×3 → effective baseline ≈ 3 m (DTM resolves ~3–5 m features; 1 m is noise).
 - Hazard classes: 0 = safe (< 10°), 1 = caution (10–25°), 2 = hazard (> 25°), 255 = ignore. Hazard is rare → class weights.
 - **Splits are spatial blocks, never random tiles:** 1 km blocks, contiguous test and val regions, 300 m buffer dropped

@@ -58,8 +58,13 @@ ai4mars:
   hazard_weights: {sand: 1.0, big_rock: 1.5}   # ASSUMPTION: ground hazard score
 
 domars:
-  patch_size: 200
-  stride: 100               # sliding-window stride (50-100 px)
+  weights: data/raw/domars16k/models/resnet50.pth   # pretrained, 93.2% on the DoMars16k test split
+  arch: resnet50
+  patch_size: 200           # CTX px (6 m) = 1.2 km window
+  stride: 50                # 300 m landform cells; each averages the windows overlapping it
+  min_confidence: 0.6       # ASSUMPTION: below this max class prob a cell is UNKNOWN (multiplier 1.0);
+                            # removes the low-confidence 'cliff' misfires on flat floor (mean conf 0.44)
+  map: data/processed/landform.npz
   classes: [aec, ael, cli, rid, fsf, sfe, fsg, fse, fss, cra, sfx, mix, rou, smo, tex]
 
 cost:

@@ -4,6 +4,7 @@ Usage:
   python scripts/precompute_layers.py --layers slope hazard --preview   # M1: 1 m slope + hazard labels
   python scripts/precompute_layers.py --layers cost --route --preview   # M2: 5 m routing grid + demo route
   python scripts/precompute_layers.py --layers ortho                    # M3: 25 cm ortho -> 1 m U-Net input
+  python scripts/precompute_layers.py --layers landform --route --preview  # M5: landform map + fused-cost route
 """
 
 import argparse
@@ -17,11 +18,14 @@ import rasterio
 from rasterio.windows import Window
 from tqdm import tqdm
 
+import torch
 from matplotlib.colors import LightSource
 from rasterio.transform import Affine, rowcol
 
 from martianmap.config import load_config, repo_path
-from martianmap.terrain.costmap import block_max, block_mean, slope_cost
+from martianmap.models.landform import CLASSES as LANDFORM_CLASSES
+from martianmap.models.landform import UNKNOWN, landform_cell_probs, load_domars, sample_to_grid
+from martianmap.terrain.costmap import block_max, block_mean, buffer_impassable, landform_multiplier, slope_cost
 from martianmap.terrain.hazard_labels import IGNORE, hazard_classes, invalid_mask
 from martianmap.terrain.route import least_cost_route, path_stats, straight_line
 from martianmap.terrain.slope import filter_radius_px, slope_deg
@@ -137,23 +141,88 @@ def route_grid(cfg: dict) -> None:
     print(f"wrote {out}  grid {np.vstack(slopes).shape}, cell {f * s.res[0]:g} m")
 
 
+def landform_layer(cfg: dict, preview_png: bool) -> None:
+    """DoMars16k sliding-window landform map over the CTX covering the DTM -> landform.npz (+ PNG)."""
+    d, p = cfg["domars"], cfg["paths"]
+    with rasterio.open(repo_path(p["dtm_raw"])) as dtm, rasterio.open(repo_path(p["ctx_raw"])) as ctx:
+        margin = d["patch_size"] * ctx.res[0] / 2  # so cells at the DTM edge still get full windows
+        b = dtm.bounds
+        win = ctx.window(b.left - margin, b.bottom - margin, b.right + margin, b.top + margin).round_offsets().round_lengths()
+        win = win.intersection(Window(0, 0, ctx.width, ctx.height))
+        img = ctx.read(1, window=win)
+        win_transform = ctx.window_transform(win)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    net = load_domars(repo_path(d["weights"]), d["arch"], device)
+    probs = landform_cell_probs(net, img, d["patch_size"], d["stride"], device)
+    confident = np.nan_to_num(probs).max(0) >= d["min_confidence"]  # NaN (no window) is never confident
+    cls = np.where(confident, np.nan_to_num(probs).argmax(0), UNKNOWN).astype(np.uint8)
+    cell_transform = win_transform * Affine.scale(d["stride"])
+    out = repo_path(d["map"])
+    np.savez_compressed(out, probs=probs.astype(np.float16), cls=cls, transform=np.array(cell_transform)[:6],
+                        classes=np.array(LANDFORM_CLASSES))
+    known = cls[cls != UNKNOWN]
+    share = np.bincount(known, minlength=len(LANDFORM_CLASSES)) / known.size
+    print(f"landform map {cls.shape} cells of {d['stride'] * ctx.res[0]:g} m, {100 * confident.mean():.0f}% confident "
+          f"(>= {d['min_confidence']}); share of confident cells: "
+          + ", ".join(f"{LANDFORM_CLASSES[i]} {100 * share[i]:.0f}%" for i in np.argsort(-share) if share[i] > 0.005))
+    print(f"wrote {out}")
+    if not preview_png:
+        return
+    cmap = plt.get_cmap("tab20", len(LANDFORM_CLASSES))
+    fig, ax = plt.subplots(1, 2, figsize=(18, 9))
+    ax[0].imshow(img, cmap="gray")
+    k = d["stride"]
+    ax[1].imshow(img, cmap="gray")
+    ax[1].imshow(np.ma.masked_equal(cls, UNKNOWN), cmap=cmap, vmin=-0.5, vmax=len(LANDFORM_CLASSES) - 0.5, alpha=0.55,
+                 extent=(0, cls.shape[1] * k, cls.shape[0] * k, 0), interpolation="nearest")
+    present = [i for i in range(len(LANDFORM_CLASSES)) if share[i] > 0]
+    ax[1].legend(handles=[plt.Rectangle((0, 0), 1, 1, color=cmap(i)) for i in present],
+                 labels=[LANDFORM_CLASSES[i] for i in present], loc="upper left", fontsize=9, ncol=2)
+    ax[0].set_title("CTX (6 m)")
+    ax[1].set_title(f"DoMars16k landform, {k * ctx.res[0]:g} m cells (uncoloured = confidence < {d['min_confidence']})")
+    for a in ax:
+        a.axis("off")
+    fig.tight_layout()
+    png = repo_path(p["previews"]) / "landform.png"
+    fig.savefig(png, dpi=90)
+    print(f"wrote {png}")
+
+
 def demo_route(cfg: dict, preview_png: bool) -> None:
-    """Least-cost vs straight-line route between the config demo endpoints, with stats (+ optional PNG)."""
+    """Routes between the config demo endpoints: slope-only, slope + landform (if the landform map exists),
+    and the straight line. All stats are measured on the full (slope + landform) cost."""
     g = np.load(repo_path(cfg["paths"]["route_grid"]))
     slope, dem, cell = g["slope"], g["dem"], float(g["cell_m"])
     transform = Affine(*g["transform"])
     c = cfg["cost"]
-    cost = slope_cost(slope, c["slope_scale_deg"], c["max_slope_deg"], round(c["hazard_buffer_m"] / cell))
+    buffer = round(c["hazard_buffer_m"] / cell)
+    slope_only = slope_cost(slope, c["slope_scale_deg"], c["max_slope_deg"], buffer)
+    lf_path = repo_path(cfg["domars"]["map"])
+    lf = None
+    if lf_path.exists():
+        m = np.load(lf_path)
+        lf = sample_to_grid(m["cls"], Affine(*m["transform"]), transform, slope.shape)
+        mult = landform_multiplier(lf, LANDFORM_CLASSES, c["landform_multiplier"])
+        cost = buffer_impassable(slope_cost(slope, c["slope_scale_deg"], c["max_slope_deg"]) * mult, buffer)
+    else:
+        print(f"no landform map at {lf_path}: slope-only cost")
+        cost = slope_only
     start, goal = (tuple(int(v) for v in rowcol(transform, *cfg["route"][k])) for k in ("start_xy", "goal_xy"))
     for name, (r, col) in (("start", start), ("goal", goal)):
         if not (0 <= r < cost.shape[0] and 0 <= col < cost.shape[1]):
             raise SystemExit(f"{name} {cfg['route'][name + '_xy']} is outside the routing grid")
-    paths = {"safest": least_cost_route(cost, start, goal), "straight": straight_line(start, goal)}
+    paths = {"slope+landform": least_cost_route(cost, start, goal)} if lf is not None else {}
+    paths |= {"slope only": least_cost_route(slope_only, start, goal), "straight": straight_line(start, goal)}
     caution = cfg["hazard"]["thresholds_deg"][0]
     stats = {k: path_stats(v, slope, dem, cost, cell, caution) for k, v in paths.items()}
-    print(f"\n{'':10s}" + "".join(f"{k:>24s}" for k in stats["safest"]))
+    if lf is not None:
+        dunes = [LANDFORM_CLASSES.index(n) for n in ("aec", "ael")]
+        for k, v in paths.items():
+            stats[k]["pct_dunes"] = float(100 * np.isin(lf[v[:, 0], v[:, 1]], dunes).mean())
+    first = next(iter(stats.values()))
+    print(f"\n{'':15s}" + "".join(f"{k:>22s}" for k in first))
     for k, st in stats.items():
-        print(f"{k:10s}" + "".join(f"{v:24.1f}" for v in st.values()))
+        print(f"{k:15s}" + "".join(f"{v:22.1f}" for v in st.values()))
     if not preview_png:
         return
     out = repo_path(cfg["paths"]["previews"]) / "route.png"
@@ -165,7 +234,7 @@ def demo_route(cfg: dict, preview_png: bool) -> None:
     for a, zoom in zip(ax, (False, True)):
         a.imshow(shade, cmap="gray")
         a.imshow(blocked, cmap="autumn", alpha=0.6, interpolation="nearest")
-        for (k, pth), style in zip(paths.items(), ("r-", "c--")):
+        for (k, pth), style in zip(paths.items(), ("r-", "m-", "c--") if len(paths) == 3 else ("r-", "c--")):
             a.plot(pth[:, 1], pth[:, 0], style, lw=1.5, label=f"{k}: {stats[k]['length_m']:.0f} m")
         a.plot(*start[::-1], "go", ms=8)
         a.plot(*goal[::-1], "b*", ms=12)
@@ -173,7 +242,7 @@ def demo_route(cfg: dict, preview_png: bool) -> None:
             a.set_xlim(max(c0, 0), c1)
             a.set_ylim(r1, max(r0, 0))
         a.axis("off")
-    ax[0].set_title(f"{cell:g} m grid; red/orange = impassable (slope >= {c['max_slope_deg']:g} deg or no data)")
+    ax[0].set_title(f"{cell:g} m grid; red/orange = impassable (slope >= {c['max_slope_deg']:g} deg, cliff, or no data)")
     ax[1].legend(loc="lower left")
     fig.tight_layout()
     fig.savefig(out, dpi=100)
@@ -182,7 +251,7 @@ def demo_route(cfg: dict, preview_png: bool) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--layers", nargs="*", default=[], choices=["slope", "hazard", "cost", "ortho"])
+    ap.add_argument("--layers", nargs="*", default=[], choices=["slope", "hazard", "cost", "ortho", "landform"])
     ap.add_argument("--route", action="store_true", help="route between config route.start_xy and goal_xy")
     ap.add_argument("--preview", action="store_true", help="write downsampled PNGs to data/processed/previews")
     args = ap.parse_args()
@@ -193,6 +262,8 @@ def main() -> None:
             preview(cfg)
     if "ortho" in args.layers:
         ortho_1m(cfg)
+    if "landform" in args.layers:
+        landform_layer(cfg, args.preview)
     if "cost" in args.layers:  # cost itself is cheap and computed at route time from the grid's slope
         route_grid(cfg)
     if args.route:

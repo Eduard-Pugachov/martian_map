@@ -81,6 +81,12 @@ Submission due Sun Nov 15, 2026, 11:59 PM local. A working demo matters more tha
   Gradient baseline is genuinely weak (oracle-tuned on test: 0.289; fitter verified against brute force).
   Illumination: **west-facing slopes are much worse** (test hazard IoU 0.14 / recall 48% vs 0.35–0.42 / 60–78%
   elsewhere; val shows the same). Results: `data/processed/eval/hazard_{test,val}.json`, `previews/eval_*.png`.
+- Landform (Nov 14): pretrained DoMars16k `resnet50.pth` (keys prefixed `net.`; preprocessing = resize 224 +
+  ImageNet norm; classes in alphabetical ImageFolder order) → 93.2% on the DoMars16k test split.
+  `precompute_layers.py --layers landform` → `landform.npz`: 75×75 cells of 300 m over the DTM, each averaging all
+  overlapping 1.2 km windows; cells with max prob < 0.6 are UNKNOWN (multiplier 1.0), which kills low-confidence
+  'cliff' misfires on the flat floor. 61% of cells confident: tex 48%, mix 28%, fss 11%, sfx 10%. 'fss' (slope
+  streaks) on the crater floor looks like domain shift. The landform term does not change the demo route.
 - Landform: try DoMars16k pretrained `models.zip` first, else `timm` resnet50/convnext_tiny fine-tune.
 - Ground U-Net (optional): `smp.Unet("resnet34", encoder_weights="imagenet", classes=4)`.
 - Training scripts are CLI tools (argparse) that run on Colab/Kaggle GPU: AMP, `--subset`, `--epochs`, best ckpt by val mIoU/acc.

@@ -25,8 +25,23 @@ def slope_cost(slope_deg: np.ndarray, scale_deg: float, max_slope_deg: float, bu
     plus a safety buffer of `buffer_cells` around those cells (8-connected)."""
     with np.errstate(invalid="ignore"):
         cost = 1.0 + (slope_deg / scale_deg) ** 2
-        blocked = ~np.isfinite(slope_deg) | (slope_deg >= max_slope_deg)
+        cost[~np.isfinite(slope_deg) | (slope_deg >= max_slope_deg)] = np.inf
+    return buffer_impassable(cost, buffer_cells)
+
+
+def buffer_impassable(cost: np.ndarray, buffer_cells: int) -> np.ndarray:
+    """Also block every cell within `buffer_cells` (8-connected) of an impassable (inf) cell."""
     if buffer_cells > 0:
-        blocked = binary_dilation(blocked, structure=np.ones((3, 3), bool), iterations=buffer_cells)
-    cost[blocked] = np.inf
+        cost = cost.copy()
+        cost[binary_dilation(np.isinf(cost), structure=np.ones((3, 3), bool), iterations=buffer_cells)] = np.inf
     return cost
+
+
+def landform_multiplier(cls: np.ndarray, class_names: tuple[str, ...], multipliers: dict[str, float | None]) -> np.ndarray:
+    """Per-cell cost multiplier from landform class indices; None in config = impassable (inf).
+    Unknown indices (outside the landform map) and classes missing from config get 1.0."""
+    lut = np.ones(256, np.float64)
+    for i, name in enumerate(class_names):
+        if name in multipliers:
+            lut[i] = np.inf if multipliers[name] is None else multipliers[name]
+    return lut[cls]

@@ -15,6 +15,13 @@ paths:
   slope: data/processed/slope_deg.tif
   hazard_labels: data/processed/hazard_labels.tif
   previews: data/processed/previews
+  route_grid: data/processed/route_grid.npz   # slope (block max) + DEM (block mean) at grid.route_cell_size_m
+
+route:
+  # Demo endpoints in map metres (same Eqc CRS as the DTM).
+  # Start: Octavia E. Butler landing site, 18.4447N 77.4508E -> x = R*lon, y = R*lat (R = 3,396,190 m)
+  start_xy: [4590904, 1093296]
+  goal_xy: [4585686, 1097658]   # ASSUMPTION: a point on the western delta near its main channel (~7 km from start)
 
 hazard:
   # Gaussian pre-smooth + Horn 3x3 slope -> effective baseline ~3 m (DTM resolves ~3-5 m features)

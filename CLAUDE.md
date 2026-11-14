@@ -16,7 +16,8 @@ Full plan: **PLAN.md** (read the relevant section before coding).
 ## Status
 Coding has started (Eddie's call, Nov 13). Local env: `.venv` (Python 3.13, CUDA torch) in the repo root, gitignored.
 Raw data lives in `data/raw/jezero/` and `data/raw/domars16k/`. C: is nearly full (~27 GB free before downloads):
-check free space before writing large files, and prefer deleting the raw 25 cm ortho once the 1 m version exists.
+check free space before writing large files. The raw 25 cm ortho was deleted (Nov 14) after `ortho_1m.tif` was
+built, so `precompute_layers.py --layers ortho` needs a re-download first (URL in PLAN.md §2).
 
 ## Priorities (also the cut order, from the bottom)
 (a) DTM slope + A* route → (b) DoMars16k landform layer → (c) hazard U-Net → (d) DTM-free comparison →
@@ -71,6 +72,10 @@ Submission due Sun Nov 15, 2026, 11:59 PM local. A working demo matters more tha
 ## Models
 - Hazard U-Net: `smp.Unet("resnet34", encoder_weights="imagenet", in_channels=3, classes=3)`, tiles 512 (or 256),
   CE with class weights + Dice, `ignore_index=255`. Baselines: always-safe, image-gradient (Sobel, thresholds fit on train).
+  Run 1 (Nov 14, `train/train_hazard.py --epochs 40`, ~9 min on the RTX 4080 Laptop): best val mIoU 0.542
+  (safe 0.80 / caution 0.40 / hazard 0.43) at epoch 40 → `checkpoints/hazard_unet_best.pt` (+ `.csv` log).
+  Predictions are blobby: big scarps found, fine ripples mostly missed. The model calls the ortho's nodata edge
+  a scarp → always mask ortho == 0 (and a small margin) when making predicted-hazard maps.
 - Landform: try DoMars16k pretrained `models.zip` first, else `timm` resnet50/convnext_tiny fine-tune.
 - Ground U-Net (optional): `smp.Unet("resnet34", encoder_weights="imagenet", classes=4)`.
 - Training scripts are CLI tools (argparse) that run on Colab/Kaggle GPU: AMP, `--subset`, `--epochs`, best ckpt by val mIoU/acc.

@@ -2,236 +2,307 @@
 **NASA Space Apps 2026 · Challenge: "Interplanetary Survival Guide: Martian Map"**
 Hackathon: Sat Nov 14 – Sun Nov 15, 2026 (submit by Nov 15, 11:59 PM local time; check your local event)
 
+> **No project code before Nov 14** until the local lead confirms the pre-event rules. Before then, only the work in
+> the "Pre-event prep" checklist (§5) is done. The repo currently holds docs, `config.yaml` and `requirements.txt` only.
+
 ---
 
-## 0. The pitch (one sentence)
-Most teams on this challenge will put existing NASA layers (elevation, slope) on a map and draw a route.
-**We make new layers with ML**: a landform classifier maps what the terrain *is* from orbit,
-a U-Net labels what an astronaut would *see* at ground level (soil / bedrock / sand / big rock),
-and both feed a hazard-aware route planner for a human Marswalk in **Jezero Crater**.
+## 0. The pitch
+Elevation models (DTMs) exist only where HiRISE took stereo pairs, which is a small part of Mars. Everywhere else, a
+Marswalk planner has images but no slopes. **We train a U-Net to predict slope hazard from a single HiRISE orthoimage**,
+add a DoMars16k landform layer on top, and plan hazard-aware routes in **Jezero Crater**. In **DTM-free mode** the route
+is planned from the image alone, and we show how close it comes to the route planned with the real DTM.
 
-Why Jezero: Perseverance is there, the best public high-res elevation data covers it, and
-DoMars16k's authors already ran a Jezero landform analysis, so we have something to check our results against.
+Why Jezero: the USGS Mars 2020 TRN products give a co-produced HiRISE orthomosaic and DTM (free training labels), and
+DoMars16k's authors already ran a Jezero landform analysis, so we have something to check against.
 
-> ⚠️ Before Saturday, read the **official challenge statement + resource list** on spaceappschallenge.org
-> (full statements were released Oct 28). Adjust objectives and wording to match it, and use at least
-> one dataset it lists. The challenge is about building a layered, integrated view of a Martian
-> location or route, which this plan does.
+> ⚠️ Before Saturday, read the **official challenge statement + resource list** on spaceappschallenge.org and the
+> Nov 13 participant guides. Adjust objectives and wording to match, and use at least one dataset they list.
 
 ---
 
 ## 1. System overview
 
 ```
-             ORBITAL (map view)                          GROUND (astronaut view)
- ┌─────────────────────────────────────┐        ┌──────────────────────────────────┐
- │ CTX image of Jezero (~6 m/px)       │        │ Rover navcam images              │
- │   → Landform classifier (DoMars16k) │        │   → U-Net terrain segmentation   │
- │   → sliding window → landform map   │        │     (AI4Mars: soil/bedrock/      │
- │                                     │        │      sand/big rock)              │
- │ HiRISE DTM (1 m/px)                 │        │   → % sand / big rock = local    │
- │   → slope map                       │        │     hazard score + overlay       │
- └──────────────┬──────────────────────┘        └───────────────┬──────────────────┘
-                │                                               │
-                ▼                                               ▼
-        Cost map = f(slope, landform class)            "What you'd see here" panel
-                │
-                ▼
-     A* least-cost route (start → goal)  →  distance, elevation profile, est. walk time
-                │
-                ▼
-            Gradio app (deployed on Hugging Face Spaces)
+ HiRISE orthoimage (25 cm → 1 m)        HiRISE DTM (1 m)                 CTX image (~6 m/px)
+          │                                    │                                 │
+          ▼                                    ▼                                 ▼
+ ┌──────────────────────┐          slope (≈3 m baseline)            ┌──────────────────────┐
+ │ Hazard U-Net         │◄─labels── → safe / caution / hazard       │ Landform classifier  │
+ │ image → safe/caution │  (train)             │                    │ (DoMars16k, 15 cls)  │
+ │         /hazard      │                      │                    │ sliding window map   │
+ └─────────┬────────────┘                      │                    └──────────┬───────────┘
+           │ predicted hazard                  │ true slope                    │ landform
+           ▼                                   ▼                               │
+   Cost (DTM-free mode)                 Cost (DTM mode)  ◄─────────────────────┤
+   = f(pred. hazard, landform)          = f(slope, landform) ◄─────────────────┘
+           │                                   │
+           ▼                                   ▼
+     Route P (predicted)    vs.    Route T (true)   (+ Route O: oracle classes)
+           └──────────────┬────────────────────┘
+                          ▼
+     Comparison: path overlap, extra true cost, true-hazard pixels crossed
+                          ▼
+     Gradio app (HF Spaces): Mission Map · How it works · [optional] Ground view (AI4Mars)
 ```
 
-**Two ML components, on purpose:**
-| Component | Task | Why it's here |
+**ML components:**
+| Component | Task | Role |
 |---|---|---|
-| **A. Ground terrain U-Net** | Pixel segmentation, 4 classes | Reuses your colorizer stack (PyTorch U-Net + Gradio). This is the "U-Net" part of the pitch. |
-| **B. Orbital landform classifier** | 15-class patch classification → sliding-window map | The only good *orbital* labeled terrain dataset is patch-labeled, not pixel-labeled. This is what produces the map layer. |
-
-(Honest note: no big public dataset has pixel-level sand/rock/bedrock labels *from orbit*.
-AI4Mars is rover-level. So the orbital layer comes from a patch classifier, and the U-Net works on ground views.
-Say this up front in the presentation; it makes the project look more credible, not less.)
+| **A. Hazard U-Net** (main) | Image → per-pixel slope-hazard class (3 classes) | Makes hazard maps where no DTM exists; drives DTM-free mode |
+| **B. Landform classifier** | 15-class CTX patch classification → sliding-window map | Second cost layer: what the terrain *is* (dunes, cliffs, ...) |
+| **G. Ground-view U-Net** (optional) | AI4Mars rover images → soil / bedrock / sand / big rock | Small demo tab only; first thing cut |
 
 ---
 
 ## 2. Datasets
 
-### Core (must have)
-| # | Dataset | What it is | Use | Size / Access |
-|---|---|---|---|---|
-| 1 | **AI4Mars** (NASA JPL) | Curiosity NAVCAM/Mastcam images with crowd-sourced pixel labels: soil, bedrock, sand, big rock. ~16k labeled training images; 322-image expert "gold" test set | Train U-Net (A) | Hugging Face: `hassanjbara/AI4MARS` (parquet, easiest). Also on Kaggle: `yash92328/ai4mars-terrainaware-autonomous-driving-on-mars` |
-| 2 | **DoMars16k** (TU Dortmund) | 16,150 CTX patches (200×200 px ≈ 1.2 km), 15 landform classes | Train/fine-tune landform classifier (B) | Zenodo record 4291940: `data.zip` (~128 MB) + **`models.zip` with pretrained networks** + code at github.com/thowilh/geomars |
-| 3 | **Mars 2020 TRN HiRISE DTM mosaic** (USGS) | 1 m/px elevation of Jezero | Slope map | ~1.8 GB GeoTIFF: `https://planetarymaps.usgs.gov/mosaic/mars2020_trn/HiRISE/JEZ_hirise_soc_006_DTM_MOLAtopography_DeltaGeoid_1m_Eqc_latTs0_lon0_blend40.tif` |
-| 4 | **CTX imagery of Jezero** | Input image for landform map | Run classifier (B) over it | USGS Jezero landing-site products (CTX orthomosaic / LVS map) at astrogeology.usgs.gov, or Murray Lab global CTX mosaic tiles |
+### Core
+| # | Dataset | Use | Access |
+|---|---|---|---|
+| 1 | **Mars 2020 TRN HiRISE DTM mosaic** (USGS, 1 m/px) | Slope → hazard labels; DTM-mode routing | ~1.8 GB GeoTIFF: `https://planetarymaps.usgs.gov/mosaic/mars2020_trn/HiRISE/JEZ_hirise_soc_006_DTM_MOLAtopography_DeltaGeoid_1m_Eqc_latTs0_lon0_blend40.tif` |
+| 2 | **Mars 2020 TRN HiRISE orthomosaic** (USGS, 25 cm/px) | U-Net input | ~3.2 GB GeoTIFF, same USGS TRN product family. **Exact URL not yet confirmed** (prep task). |
+| 3 | **CTX imagery of Jezero** (~6 m/px) | Input for landform map | USGS Jezero landing-site products (CTX orthomosaic) at astrogeology.usgs.gov, or Murray Lab global CTX mosaic tiles |
+| 4 | **DoMars16k** (TU Dortmund) | Train/fine-tune landform classifier | Zenodo 4291940: `data.zip` (~128 MB) + `models.zip` (pretrained) · github.com/thowilh/geomars |
 
-**AI4Mars label encoding** (label PNGs): `0=soil, 1=bedrock, 2=sand, 3=big rock, 255=no label`.
-Also ships rover masks (MXY) and 30 m range masks (RNG). **Set label to 255 where rover mask = 1
-or range mask = 1**, and use `ignore_index=255` in the loss.
+### Optional
+| Dataset | Use | Access |
+|---|---|---|
+| **Second HiRISE DTM + ortho pair** (another site) | Generalization test for the hazard U-Net (different terrain + sun angle) | USGS STAC: stac.astrogeology.usgs.gov (HiRISE DTMs and orthoimages). Pick one small pair in prep. |
+| **AI4Mars** (NASA JPL) | Ground-view demo tab (G) | HF `hassanjbara/AI4MARS` (parquet) · Kaggle `yash92328/ai4mars-terrainaware-autonomous-driving-on-mars` |
+| Mars-Bench (NeurIPS 2025) | `mb-boulder_seg` as an extra hazard layer (stretch) | mars-bench.github.io |
 
-### Optional / stretch
-| Dataset | Use |
-|---|---|
-| HiRISE orthomosaic of Jezero (25 cm/px, ~3.2 GB, USGS) | Pretty high-res basemap, and the input for boulder detection |
-| **Mars-Bench** (NeurIPS 2025; mars-bench.github.io; HF + Zenodo) | `mb-boulder_seg` (HiRISE boulders, only 39 train images), `mb-crater_binary_seg`, `mb-s5mars`. Boulder seg = an extra orbital hazard layer |
-| S5Mars (6,000 Curiosity images, 10 classes; on HF / FiftyOne zoo) | Finer-grained ground classes if AI4Mars works early |
-| HiRISE landmark set v3.2 (Zenodo 4002935) | Craters/dunes classification at HiRISE scale |
-| Perseverance raw images (mars.nasa.gov/mars2020/multimedia/raw-images) | Real Jezero ground images for the "what you'd see" panel. Expect domain shift (U-Net is trained on Curiosity) |
-| NASA Mars Trek WMTS | Online basemap tiles if you go with a web map later |
-
-### Download plan (do this BEFORE Saturday)
-The big files (DTM 1.8 GB, ortho 3.2 GB, AI4Mars several GB) are the #1 thing that can kill a hackathon.
-Download them Wed–Fri. **Crop the DTM and CTX to one area of interest (AOI)** (e.g. ~10×10 km around the
-Perseverance landing site / delta front) and save small GeoTIFFs/NumPy arrays. The app should only ever touch the cropped files.
-
-> Check your local event's rules on pre-work. Setting up your environment, downloading data and reading papers
-> is normally fine; save the actual project code for the event weekend if the rules say so.
+**AI4Mars label encoding:** `0=soil, 1=bedrock, 2=sand, 3=big rock, 255=no label`. Merge rover (MXY) and 30 m range
+(RNG) masks into 255; loss uses `ignore_index=255`.
 
 ---
 
 ## 3. Component details
 
-### A. Ground terrain U-Net (AI4Mars)
-- **Library:** `segmentation_models_pytorch` (`smp.Unet(encoder_name="resnet34", encoder_weights="imagenet", in_channels=3, classes=4)`).
-  An ImageNet-pretrained encoder trains *much* faster than the scratch U-Net in your colorizer.
-  Grayscale NAVCAM → repeat to 3 channels.
-- **Input:** resize/crop to 512×512 (AI4Mars images are 1024×1024). Start at 256 if GPU time is tight.
-- **Loss:** CrossEntropy(ignore_index=255) + Dice. **Class weights**: big rock is rare (~3% of pixels per JPL), so weight it up.
-- **Augmentations (albumentations):** horizontal flip, random resized crop, brightness/contrast, slight blur. No vertical flips (the horizon matters).
-- **Training:** AdamW lr 3e-4, cosine schedule, mixed precision, 10–20 epochs. Train on Colab/Kaggle T4 if you have no local GPU.
-  **Use a subset (e.g. 5k images) first** to get a working checkpoint in under an hour, then do a full run while building the app.
-- **Eval:** mIoU + per-class IoU on the expert test set (`test_min3` split). Save a confusion matrix image for the slides.
-  Reference point: JPL's DeepLabv3 paper reports >96% pixel accuracy. You won't match it in a weekend, and you don't need to.
-- **Output in app:** colored overlay + % of each class + "ground hazard score" = %sand·w_s + %bigrock·w_r.
+### C. Slope and hazard labels (from the DTM)
+- **Slope baseline ≈ 3 m:** Gaussian-smooth the DTM (σ = 1 px), then Horn's 3×3 slope operator at 1 m spacing.
+  - **Why not 1 m:** HiRISE DTMs are *posted* at 1 m but stereo matching averages over several pixels, so they only
+    resolve features of roughly 3–5 m. A 1 m baseline mostly amplifies stereo noise and mosaic seams.
+  - **Why not 10 m+:** that would hide the short, steep scarps a walker actually has to avoid. ~3 m ≈ a few steps.
+  - Stretch: compare 2 m vs. 5 m baselines.
+- **Classes** (thresholds go in `config.yaml`):
+  - `0 = safe`: slope < 10°
+  - `1 = caution`: 10–25°
+  - `2 = hazard`: > 25° (walking-EVA assumption, tunable)
+  - `255 = ignore`: DTM no-data, the DTM ↔ MOLA blend zone ("blend40"), and a buffer around seams between source DTMs
+- **First check on Nov 14:** class histogram. If hazard is far below ~1% of pixels, consider hazard > 20°.
+- **Roughness (stretch):** std of detrended elevation in a ~5 m window, as an extra label channel or cost term.
+
+### A. Image-only hazard U-Net (main model)
+- **Working resolution: 1 m.** Area-average the 25 cm ortho 4×4 onto the DTM grid.
+  - Gain: one shared grid, 16× fewer pixels, a 512 px tile = 512 m of context, fast training.
+  - Loss: fine texture (boulders, ripple crests) only visible at 25 cm, which may correlate with roughness.
+  - Stretch: 0.5 m input with labels upsampled 2×.
+- **Co-registration:** ortho and DTM share a projection, but grid origins/extents may differ, so resample the ortho
+  onto the DTM grid once (`rasterio` WarpedVRT, average resampling). No feature matching needed.
+- **Model:** `smp.Unet("resnet34", encoder_weights="imagenet", in_channels=3, classes=3)`, grayscale repeated to 3 channels.
+  Tiles 512 (256 if GPU time is tight).
+- **Loss:** CrossEntropy with class weights (hazard is rare) + Dice, `ignore_index=255`.
+- **Augmentation:** 90° rotations + flips are fine because the label is slope *magnitude*, which doesn't change under
+  rotation; they also stop the model relying on one fixed sun direction. Plus brightness / contrast / gamma, slight blur.
+- **Training:** AdamW lr 3e-4, cosine, AMP, Colab/Kaggle T4. Smoke-test on a small subset, then a full run.
+- **Spatial block split (never random tiles):**
+  1. Cut the ortho ∩ DTM overlap into 1 km blocks.
+  2. **Test** = one contiguous region that **contains the routing demo AOI**, so DTM-free mode is always shown on
+     ground the model never saw. **Val** = a second contiguous region. **Train** = everything else (~70%).
+  3. Drop a **300 m buffer** (longer than a tile edge) along every boundary between splits.
+  4. Choose regions so each split has some hazard pixels (delta-front scarps, crater rims).
+  5. A unit test asserts that no tile lies within the buffer of a tile from another split.
+  Exact block coordinates are chosen on Nov 14 once the cropped rasters are inspected, and stored in `config.yaml`.
+- **Evaluation (test region only):**
+  - mIoU (headline), per-class IoU, confusion matrix.
+  - Baseline 1: **always-safe**. High pixel accuracy, poor mIoU — this is why mIoU is the headline.
+  - Baseline 2: **image gradient**: Sobel magnitude of the smoothed ortho, thresholded into 3 classes, thresholds fit
+    on train to maximize mIoU.
+  - Stretch: run on the second STAC site with no fine-tuning.
+- **Known limitation: illumination.** Slope from a single image is ambiguous: a slope's brightness depends on the
+  sun's direction and elevation, the mosaic combines source images taken under different sun angles, and albedo changes
+  (dark sand, bright bedrock) look like shading. The model may also learn landform shortcuts (e.g. "dark ripples =
+  caution") rather than geometry. **How we report it:**
+  - Per-class IoU on the test region **stratified by DTM aspect** into 4 quadrants (toward / away from / across the sun
+    if the source image's sun azimuth is known, otherwise N/E/S/W). A big gap between quadrants = illumination dependence.
+  - Second-site result (different sun angle), if done.
+  - A failure-case slide, and the limitation stated in the README and the How-it-works tab.
 
 ### B. Orbital landform classifier (DoMars16k)
-- **Fastest path:** use the **pretrained models in DoMars16k `models.zip`** first (check the format and architecture in the geomars repo).
-  If loading them is a pain, fine-tune `timm` `resnet50` / `convnext_tiny` (ImageNet) on DoMars16k. That takes ~20–30 min on a T4 at 224 px.
-- **Map generation:** slide a 200×200 window over the CTX AOI with stride 50–100 px → class probabilities per window → upsample to a class raster.
-  Optional smoothing: majority filter (the paper uses Markov random fields; a 3×3 mode filter is fine for a hackathon).
-- **Eval:** test-set accuracy + confusion matrix. Qualitative: compare your Jezero map to the figure in the DoMars16k paper.
+- **Fastest path:** pretrained models from `models.zip` (check format/architecture in the geomars repo). Fallback:
+  fine-tune `timm` `resnet50` / `convnext_tiny` on DoMars16k (~20–30 min on a T4 at 224 px).
+- **Map:** slide a 200×200 window over the CTX AOI, stride 50–100 px → class probabilities → class raster. Optional 3×3 mode filter.
+- **Eval:** test-set accuracy + confusion matrix; qualitative comparison with the Jezero figure in the DoMars16k paper.
 
-### C. Slope & cost map
-- Read the cropped DTM with `rasterio`; slope (degrees) = `arctan(hypot(dz/dx, dz/dy))` with `np.gradient` using pixel size (1 m).
-- Resample the landform raster onto the DTM grid (or downsample both to a common ~5–10 m grid; this makes A* fast).
-- **Cost per cell (tunable, document as assumptions):**
-  - slope: `1 + (slope/10)^2`; **impassable if > 25°** (walking EVA assumption; flag it as tunable)
-  - landform multiplier, e.g. smooth ×1.0, textured ×1.3, mixed ×1.5, rough ×2.5, crater/crater field ×2.0,
-    aeolian curved/straight (dunes) ×4.0 (sand trapped Spirit & Opportunity, a good story beat), cliff = impassable, gullies/mass wasting ×3.0
-- Put all weights in one `config.yaml` so they can be tuned live in the demo.
+### D. Cost map and routes
+- **Landform multiplier** (both modes): smooth ×1.0, textured ×1.3, mixed ×1.5, rough ×2.5, crater/crater field ×2.0,
+  dunes (aeolian curved/straight) ×4.0, cliff = impassable, gullies/mass wasting ×3.0 (all in `config.yaml`).
+- **DTM mode:** slope cost `1 + (slope/10)^2`, impassable if > 25°, × landform multiplier.
+- **DTM-free mode:** class cost safe = 1, caution = 3, hazard = 50 (very high, *not* impassable, so a wrong prediction
+  can't block every path), × landform multiplier.
+- Routing: `skimage.graph.route_through_array(cost, start, end, fully_connected=True, geometric=True)` on a
+  2–5 m grid (downsampled for speed).
+- **Routing AOI:** ~4×4 km, inside the test region (smaller than the earlier 10×10 km idea because of the split).
 
-### D. Route planner
-- `skimage.graph.route_through_array(cost, start, end, fully_connected=True, geometric=True)`, which is A*-equivalent least-cost path in one line.
-- Compare **shortest straight-line path vs. safest path**: distance, total climb, max slope, % of path over dunes/rough terrain.
-- Elevation profile along the path (matplotlib/plotly).
-- Walk-time estimate: a Tobler-style hiking function scaled for Mars suits (flag it as a rough model).
+### E. DTM-free mode comparison (main U-Net demo)
+Three routes between the same start and goal:
+- **T**: true continuous DTM slope (reference)
+- **O**: "oracle" classes: the thresholded true slope. Separates the error from collapsing slope to 3 classes from the model's error.
+- **P**: predicted classes from the hazard U-Net
 
-### E. App (Gradio, since you already know it)
-- **Tab 1 – Mission Map:** basemap image with toggleable overlays (slope / landform / cost). Click twice on the image (`gr.Image.select` gives pixel coords) for start & goal → draws both routes + stats table + elevation profile.
-- **Tab 2 – Ground View:** pick a sample NAVCAM/Perseverance image or upload one → U-Net overlay + class percentages + hazard score.
-- **Tab 3 – How it works / Model cards:** metrics, confusion matrices, dataset credits, assumptions.
-- **Deploy to Hugging Face Spaces** (free, Gradio-native), so judges just open a link and don't have to install anything.
-- Precompute heavy stuff (landform map, slope, cost raster) offline → ship as small `.npy`/PNG files. The app only runs A* + U-Net inference (CPU is fine).
+Reported for **P vs. T** and **O vs. T**, always measured on the *true* cost map:
+- **Path overlap:** % of the route's cells within 5 m of route T
+- **Extra cost:** true cost of the route ÷ true cost of T − 1
+- **Hazard crossings:** number of true-hazard pixels crossed and max true slope along the route
+- **Length difference**
+
+Also run on a few fixed start/goal pairs for a summary table in the slides (not just the one the user clicks).
+
+### F. App (Gradio, deployed to Hugging Face Spaces)
+- **Tab 1 – Mission Map:** basemap with toggleable overlays (slope, true hazard, predicted hazard, landform, cost).
+  Click start and goal (`gr.Image.select`). **DTM-free mode toggle** draws routes T, P (and O) with the comparison table
+  and an elevation profile.
+- **Tab 2 – How it works:** U-Net metrics vs. baselines, aspect-stratified table, landform metrics, datasets, assumptions, limitations.
+- **Tab 3 – Ground view (optional):** AI4Mars U-Net on sample Curiosity images: overlay + class percentages.
+- Everything heavy is precomputed (predicted hazard raster, slope, landform, cost maps) and shipped as small `.npy`/PNG.
+  The app only runs A* at request time (CPU).
+
+### G. Ground-view U-Net (AI4Mars, optional)
+- `smp.Unet("resnet34", imagenet, classes=4)`, 512 px input, CE (`ignore_index=255`, class weights for big rock) + Dice.
+  No vertical flips (the horizon matters). Subset training is enough for a demo.
+- Eval: mIoU on the expert `test_min3` split. Shown only in Tab 3.
 
 ---
 
-## 4. Repo structure
+## 4. Repo structure (to be created on Nov 14)
 ```
-martian-map/
-├── CLAUDE.md                 # context for Claude Code (read first)
-├── PLAN.md                   # this file
-├── README.md                 # judge-facing: what, why, how to run, credits
+martian_map/
+├── CLAUDE.md
+├── PLAN.md
+├── README.md                 # judge-facing: what, why, how to run, credits, limitations
 ├── requirements.txt
-├── config.yaml               # AOI bounds, cost weights, slope limits, paths
+├── config.yaml               # AOI, split blocks, slope baseline + thresholds, cost weights, paths
 ├── data/                     # gitignored
 │   ├── raw/                  # big downloads
-│   └── processed/            # cropped AOI rasters, .npy, sample images
+│   └── processed/            # cropped + resampled rasters, tiles, precomputed layers
 ├── checkpoints/              # gitignored except final small weights
 ├── scripts/
-│   ├── download_ai4mars.py
 │   ├── download_domars.py
-│   ├── download_jezero.py    # DTM + CTX, then crop to AOI
-│   └── precompute_layers.py  # slope, landform map, cost map → data/processed
+│   ├── download_ai4mars.py           # optional
+│   ├── precompute_layers.py          # slope, hazard labels, landform map, cost maps
+│   ├── make_hazard_tiles.py          # tiles + spatial splits → data/processed/tiles
+│   ├── eval_hazard.py                # mIoU, baselines, aspect-stratified table
+│   └── compare_routes.py             # T / O / P routes on fixed start-goal pairs
 ├── src/martianmap/
-│   ├── data/ai4mars.py       # Dataset w/ mask merging + augmentations
+│   ├── config.py
+│   ├── data/tiles.py                 # tiling, spatial block splits, buffer
 │   ├── data/domars.py
-│   ├── models/unet.py        # smp wrapper + load/save
-│   ├── models/landform.py    # classifier + sliding-window mapper
+│   ├── data/ai4mars.py               # optional: mask merging + augmentations
 │   ├── terrain/slope.py
+│   ├── terrain/hazard_labels.py      # slope → classes + ignore mask
+│   ├── terrain/roughness.py          # stretch
 │   ├── terrain/costmap.py
 │   ├── terrain/route.py
-│   └── viz/overlays.py       # colormaps, legend, route drawing
+│   ├── terrain/compare_routes.py     # overlap, extra cost, hazard crossings
+│   ├── models/hazard_unet.py
+│   ├── models/landform.py            # classifier + sliding-window mapper
+│   ├── models/ground_unet.py         # optional
+│   ├── eval/metrics.py               # IoU, confusion, aspect stratification
+│   ├── eval/baselines.py             # always-safe, image gradient
+│   └── viz/overlays.py
 ├── train/
-│   ├── train_unet.py         # CLI args, AMP, logs mIoU, saves best ckpt
-│   └── train_landform.py
-├── app/app.py                # Gradio Blocks
-├── notebooks/                # exploration only; logic lives in src/
-└── tests/                    # costmap + route + mask-merging unit tests
+│   ├── train_hazard.py               # CLI, AMP, --subset, --epochs, best ckpt by val mIoU
+│   ├── train_landform.py
+│   └── train_ground.py               # optional
+├── app/app.py
+├── notebooks/                        # exploration only
+└── tests/   # hazard labels, splits/leakage, costmap, route, route comparison, AI4Mars mask merge
 ```
 
-**Core requirements:** `torch torchvision segmentation-models-pytorch timm albumentations rasterio numpy scipy scikit-image matplotlib plotly gradio datasets huggingface_hub pyyaml tqdm pytest`
+Data cropping before the event uses **GDAL command-line tools** (`gdal_translate -projwin`, `gdalwarp`), not project code.
 
 ---
 
 ## 5. Timeline
 
-### Prep (Tue Nov 10 – Fri Nov 13)
-- [ ] Register, form/confirm team, pick local or Universal Event
-- [ ] Read the official challenge statement + resources; update §0 and README wording
-- [ ] Set up Python 3.11 venv, `requirements.txt`, git repo, HF account, Colab/Kaggle GPU access
-- [ ] Start ALL big downloads; pick the AOI; crop DTM + CTX
-- [ ] Skim AI4Mars paper + DoMars16k paper (methods + Jezero figure)
-- [ ] Open `models.zip` from DoMars16k: can you load a pretrained model? (decides Path B effort)
+### Pre-event prep (before Nov 14: allowed work only)
+- [ ] **Confirm the rules on pre-event code with the local lead** (and whether an empty repo skeleton counts)
+- [ ] Read the official challenge statement + resources and the **Nov 13 participant guides**; update the §0 wording
+- [ ] Environment: Python venv (decide 3.11 vs. 3.13), install `requirements.txt`; HF, Colab and Kaggle accounts with GPU access
+- [ ] Downloads:
+  - [ ] HiRISE TRN DTM (1.8 GB)
+  - [ ] HiRISE TRN orthomosaic: **find the exact URL**, check it covers the DTM (`gdalinfo`)
+  - [ ] CTX of Jezero
+  - [ ] DoMars16k `data.zip` + `models.zip`
+  - [ ] (optional) AI4Mars; one small second-site DTM + ortho pair from USGS STAC
+- [ ] Crop the DTM, ortho and CTX to the overlap region / AOI with `gdal_translate` / `gdalwarp` → `data/processed/`
+- [ ] Check with `gdalinfo` whether the DTM mosaic has a footprint/mask layer for blend zones and seams
+- [ ] Skim the DoMars16k paper (methods + Jezero figure); optionally AI4Mars
 
 ### Saturday Nov 14
+Priority (= cut order, see below): **(a)** DTM slope + A* → **(b)** landform → **(c)** hazard U-Net → **(d)** DTM-free
+comparison → **(e)** app polish + deploy → **(f)** AI4Mars tab. U-Net training starts early because it runs on the GPU
+in parallel; that's scheduling, not a change of priority.
+
 | Time | Milestone | Done when |
 |---|---|---|
-| 0–2 h | Repo skeleton, config, data loaders + a notebook that visualizes AI4Mars samples with masks | Images and masks line up; rover/range masks merged into 255 |
-| 2–4 h | **Kick off U-Net training on GPU** (subset first) | Loss going down; first checkpoint saved |
-| 2–5 h (parallel) | Slope + cost map + A* on the DTM alone | A route that avoids steep slopes, plotted on a hillshade |
-| 5–8 h | Landform classifier (pretrained or fine-tuned) + sliding-window Jezero map | Landform raster that looks plausible next to the CTX image |
-| 8–10 h | Fuse landform into cost map; shortest vs. safest comparison | Two routes, visibly different, with a stats table |
-| 10–13 h | Gradio app v1: Mission Map tab + Ground View tab running locally | Full click-to-route flow works |
-| Night | Full U-Net training run | Better checkpoint by morning |
+| 0–1.5 h | (a) Slope + hazard labels + cost + A* on the DTM | Route avoids steep slopes on a hillshade; class histogram checked |
+| 1.5–3 h | (c) Tiles + spatial splits → **start hazard U-Net training on GPU** | Leakage test passes; loss falling |
+| 3–6 h | (b) Landform map → combined cost | Landform raster plausible next to CTX; route changes with landform |
+| 6–8 h | (c) Evaluate U-Net: mIoU, baselines, aspect table | Beats both baselines on the test region (or we say it doesn't) |
+| 8–11 h | (d) DTM-free mode: routes T / O / P + comparison stats | Three routes on the map + stats table |
+| 11–13 h | (e) Gradio app v1 running locally | Click-to-route in both modes |
+| Night | Longer U-Net run; (f) AI4Mars training on a second GPU if spare | Better checkpoint by morning |
 
 ### Sunday Nov 15
 | Time | Milestone |
 |---|---|
-| Morning | Eval: mIoU, confusion matrices, failure cases. Elevation profile + walk time. Polish overlays/legend |
-| Midday | Deploy to HF Spaces; test on a clean browser/phone |
-| Afternoon | README, project page text, slides, **30-second demo video** (screen-record the route flow) |
-| Evening | Buffer for bugs. **Submit hours before 11:59 PM**, not minutes before |
+| Morning | (e) **Deploy to HF Spaces**; final test-region eval with the best checkpoint; second-site test (stretch) |
+| Midday | (e) Polish overlays/legend, How-it-works tab; (f) AI4Mars tab only if everything above is done |
+| Afternoon | README (incl. limitations), project page text, slides, **30-second demo video** |
+| Evening | Buffer for bugs. **Submit hours before 11:59 PM** |
 
-**Cut list if behind (in order):** boulder layer → Perseverance images → walk time → landform smoothing → Tab 3.
-**Never cut:** working route demo + U-Net ground view + deployed link.
+### Cut list (cut from the top first)
+1. (f) AI4Mars ground-view tab
+2. (e) Polish (keep a minimal deployed app)
+3. (d) Comparison extras: oracle route O, fixed-pair summary table (keep routes T vs. P + basic stats)
+4. (c) Stretch items: second site, roughness, 0.5 m input, baseline-length ablation
+5. (c) The hazard U-Net itself (fall back to "image-gradient baseline vs. DTM")
+6. (b) Landform layer
+
+**Never cut:** (a) DTM slope + A* route, a minimal app and the deployed link.
 
 ---
 
 ## 6. Judging angle / story
-1. **Problem:** Astronauts on a Marswalk can't afford to get stuck. Spirit got trapped in sand, and Curiosity's wheels were punctured by sharp rocks.
-2. **Insight:** Elevation alone isn't enough; *what the ground is made of* matters. That's an ML problem.
-3. **Solution:** Two models make two new terrain layers → hazard-aware route + ground-level preview.
-4. **Proof:** Metrics on held-out NASA test sets + "shortest vs. safest" side-by-side.
-5. **Honesty slide:** limitations (crowd labels, Curiosity → Perseverance domain shift, cost weights are assumptions).
-6. **Future:** Mars foundation models (e.g. MOMO / Mars-Bench line of work), stereo-based rock sizing, HUD for suits.
+1. **Problem:** Astronauts on a Marswalk can't afford to get stuck or fall. Spirit got trapped in sand; steep, loose slopes are a real EVA hazard.
+2. **Gap:** Slope needs a DTM, and HiRISE DTMs cover only a small part of Mars. Images cover far more.
+3. **Solution:** A U-Net that predicts slope hazard from one image, plus a landform layer → hazard-aware routes even where no DTM exists.
+4. **Proof:** mIoU on a geographically held-out region vs. two baselines, and DTM-free vs. DTM routes side by side
+   (overlap, extra cost, hazards crossed).
+5. **Honesty slide:** single-image slope depends on illumination (aspect-stratified results), 3 m baseline and
+   thresholds are assumptions, one site (+ second-site result if done), cost weights are assumptions.
+6. **Future:** more HiRISE DTM sites for training, sun-angle as an input, shape-from-shading priors, boulder detection, HUD for suits.
 
 ---
 
 ## 7. Working with Claude Code in VS Code
-- Keep `CLAUDE.md` at the repo root (included). Claude Code reads it automatically every session.
-- **One milestone per prompt.** Example: *"Implement src/martianmap/data/ai4mars.py per PLAN.md §3A. Merge rover and range masks into 255. Add a test in tests/ that checks label values are in {0,1,2,3,255}. Then show me 4 samples in notebooks/01_ai4mars.ipynb."*
-- Use **plan mode** (Shift+Tab) for bigger pieces (sliding-window mapper, app layout) so you approve the approach before it writes code.
-- Ask for tests on the pure-logic parts (cost map, route, mask merging). They're cheap and catch silent bugs.
-- **Commit after every working milestone** so it's easy to roll back if Claude Code goes off track.
-- Training runs on Colab/Kaggle: have Claude Code make `train_unet.py` a CLI script with args, then run `!python train/train_unet.py --subset 5000 --epochs 5` in a notebook that clones your repo.
-- When something breaks, paste the full traceback and the command you ran. Don't just describe it.
-- Don't let Claude Code download multi-GB files in the middle of a session; use your prepped `data/processed/`.
+- Keep `CLAUDE.md` at the repo root. Claude Code reads it automatically every session.
+- **One milestone per prompt**, e.g. *"Implement src/martianmap/terrain/hazard_labels.py per PLAN.md §3C, with tests."*
+- Use plan mode for bigger pieces (tiling + splits, sliding-window mapper, route comparison, app layout).
+- Tests for the pure-logic parts: hazard labels, splits/leakage, cost map, route, route comparison, mask merging.
+- **Commit after every working milestone.**
+- Training on Colab/Kaggle: `!python train/train_hazard.py --subset 50 --epochs 1` to smoke-test, then the full run.
+- When something breaks, paste the full traceback and the command you ran.
+- No multi-GB downloads mid-session; use the prepped `data/processed/`.
 
 ---
 
 ## 8. Key references
-- Swan et al., *AI4MARS: A Dataset for Terrain-Aware Autonomous Driving on Mars*, CVPR Workshops 2021
+- USGS, *Mars 2020 Terrain Relative Navigation HiRISE DTM Mosaic*, doi:10.5066/P9REJ9JN (+ companion orthomosaic)
 - Wilhelm et al., *DoMars16k*, Remote Sensing 12(23), 2020, doi:10.3390/rs12233981 · Zenodo 4291940 · github.com/thowilh/geomars
-- USGS, *Mars 2020 Terrain Relative Navigation HiRISE DTM Mosaic*, doi:10.5066/P9REJ9JN
-- Purohit et al., *Mars-Bench*, NeurIPS 2025 Datasets & Benchmarks · mars-bench.github.io
-- Zhang et al., *S5Mars*, IEEE TGRS 2024
+- Horn, *Hill shading and the reflectance map*, Proc. IEEE 69(1), 1981 (slope operator)
+- USGS Astrogeology STAC catalog: stac.astrogeology.usgs.gov
+- Swan et al., *AI4MARS*, CVPR Workshops 2021 (optional tab)
+- Purohit et al., *Mars-Bench*, NeurIPS 2025 Datasets & Benchmarks (stretch)

@@ -53,3 +53,7 @@ cost:
     fsg: 1.5   # channel
     fse: 1.5   # mounds
     fss: 2.0   # slope streaks
+  roughness_weight: 0.0     # stretch: roughness cost term, off by default
+
+terrain:
+  roughness_window_m: 5.0   # ASSUMPTION: window for detrended-elevation std

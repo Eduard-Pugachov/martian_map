@@ -1,39 +1,66 @@
 # CLAUDE.md — Martian Map (NASA Space Apps 2026)
 
 ## What this project is
-Hackathon entry for "Interplanetary Survival Guide: Martian Map". An ML-driven, hazard-aware
-Marswalk route planner for Jezero Crater. Full plan: **PLAN.md** (read the relevant section before coding).
+Hackathon entry for "Interplanetary Survival Guide: Martian Map". A hazard-aware Marswalk route planner for Jezero
+Crater whose main ML piece predicts slope hazard from a single HiRISE image, so routes can be planned where no DTM exists.
+Full plan: **PLAN.md** (read the relevant section before coding).
 
-- **A. Ground U-Net:** segments rover images into soil / bedrock / sand / big rock (AI4Mars).
+- **A. Hazard U-Net (main):** HiRISE orthoimage (1 m) → per-pixel safe / caution / hazard. Labels come from DTM slope.
 - **B. Landform classifier:** 15-class CTX patch classifier (DoMars16k) → sliding-window landform map.
-- **C/D. Terrain:** slope from the HiRISE DTM + landform → cost map → least-cost route (skimage `route_through_array`).
-- **E. App:** Gradio Blocks, deployed to Hugging Face Spaces.
+- **C/D. Terrain + routing:** cost = f(slope hazard, landform) → least-cost route (skimage `route_through_array`).
+  - DTM mode: cost from true DTM slope.
+  - **DTM-free mode:** cost from the U-Net's predicted hazard. Compare routes T (true), O (oracle classes), P (predicted).
+- **E/F. App:** Gradio Blocks on Hugging Face Spaces: Mission Map (with DTM-free toggle), How it works, optional Ground view.
+- **G. Ground-view U-Net (optional):** AI4Mars soil / bedrock / sand / big rock, a small demo tab only.
+
+## No code before Nov 14
+Until the hackathon starts (Nov 14) and the local lead confirms the pre-event rules, **do not write project code,
+scripts or notebooks**. Only docs, `config.yaml` and `requirements.txt` live in the repo. Pre-event data cropping uses
+GDAL command-line tools, not project code.
+
+## Priorities (also the cut order, from the bottom)
+(a) DTM slope + A* route → (b) DoMars16k landform layer → (c) hazard U-Net → (d) DTM-free comparison →
+(e) app polish + deployment → (f) AI4Mars tab.
+**Never cut:** (a), a minimal app and the deployed link. Starting U-Net training early on the GPU is fine (parallel).
 
 ## Hard deadline
 Submission due Sun Nov 15, 2026, 11:59 PM local. A working demo matters more than elegance. Prefer simple, proven libraries.
 
 ## Conventions
-- Python 3.11. Package code lives in `src/martianmap/`. Notebooks are for exploration only, not logic.
-- All tunable numbers (AOI bounds, cost weights, slope limits, paths, class maps) go in `config.yaml`, never hard-coded.
-- Type hints + short docstrings. Keep functions small and pure where possible (easy to test).
+- Python 3.11 (pending a 3.11 vs. 3.13 decision). Package code lives in `src/martianmap/`. Notebooks are for exploration only.
+- All tunable numbers (AOI, split blocks, buffer, slope baseline, hazard thresholds, cost weights, paths, class maps)
+  go in `config.yaml`, never hard-coded.
+- Type hints + short docstrings. Keep functions small and pure where possible.
 - Data in `data/raw` and `data/processed` is gitignored. **Never download multi-GB files without asking.**
 - Use `pathlib`, `logging` (no bare prints in src/), `tqdm` for loops over data.
-- Tests in `tests/` with pytest; required for costmap, route, and mask-merging logic.
+- Tests in `tests/` with pytest; required for hazard labels, spatial splits (no leakage), cost map, route,
+  route comparison, and AI4Mars mask merging.
 
 ## Data facts
-- AI4Mars labels: 0=soil, 1=bedrock, 2=sand, 3=big rock, 255=null. Merge rover mask (MXY) and
-  30 m range mask (RNG) into 255. Loss uses `ignore_index=255`. Big rock is rare → class weights.
-- NAVCAM is grayscale → repeat to 3 channels for ImageNet encoders.
-- DoMars16k: 200×200 px CTX patches, 15 classes (aec, ael, cli, rid, fsf, sfe, fsg, fse, fss, cra, sfx, mix, rou, smo, tex).
-- DTM: 1 m/px GeoTIFF (rasterio). Always work on the cropped AOI in `data/processed/`.
+- HiRISE TRN DTM: 1 m/px GeoTIFF, equirectangular (Mars sphere). It's a mosaic blended with MOLA ("blend40"):
+  mask no-data, blend zones and seams between source DTMs as 255 (ignore).
+- HiRISE TRN orthomosaic: 25 cm/px, same projection. Resample (area average) onto the DTM's 1 m grid with rasterio;
+  grids may not align exactly, but no feature matching is needed. Exact URL still to be confirmed.
+- Slope: Gaussian smooth (σ = 1 px) + Horn 3×3 → effective baseline ≈ 3 m (DTM resolves ~3–5 m features; 1 m is noise).
+- Hazard classes: 0 = safe (< 10°), 1 = caution (10–25°), 2 = hazard (> 25°), 255 = ignore. Hazard is rare → class weights.
+- **Splits are spatial blocks, never random tiles:** 1 km blocks, contiguous test and val regions, 300 m buffer dropped
+  between splits. The routing demo AOI (~4×4 km) lies inside the test region.
+- Rotations/flips are valid augmentations for the hazard U-Net (slope magnitude doesn't change under rotation).
+- **Illumination caveat:** single-image slope depends on sun direction, mixed sun angles across the mosaic, and albedo.
+  Always report test IoU stratified by DTM aspect, and state the limitation in the README/app.
+- DoMars16k: 200×200 px CTX patches (~1.2 km), 15 classes (aec, ael, cli, rid, fsf, sfe, fsg, fse, fss, cra, sfx, mix, rou, smo, tex).
+- AI4Mars (optional): labels 0 = soil, 1 = bedrock, 2 = sand, 3 = big rock, 255 = null; merge rover (MXY) and range (RNG)
+  masks into 255. NAVCAM is grayscale → repeat to 3 channels. No vertical flips.
 
 ## Models
-- U-Net: `segmentation_models_pytorch.Unet("resnet34", encoder_weights="imagenet", classes=4)`.
+- Hazard U-Net: `smp.Unet("resnet34", encoder_weights="imagenet", in_channels=3, classes=3)`, tiles 512 (or 256),
+  CE with class weights + Dice, `ignore_index=255`. Baselines: always-safe, image-gradient (Sobel, thresholds fit on train).
 - Landform: try DoMars16k pretrained `models.zip` first, else `timm` resnet50/convnext_tiny fine-tune.
-- Training scripts are CLI tools (argparse) that must run on Colab/Kaggle GPU: AMP, `--subset`, `--epochs`, save best ckpt by val mIoU/acc.
-- The app must run inference on CPU. Heavy layers are precomputed by `scripts/precompute_layers.py`.
+- Ground U-Net (optional): `smp.Unet("resnet34", encoder_weights="imagenet", classes=4)`.
+- Training scripts are CLI tools (argparse) that run on Colab/Kaggle GPU: AMP, `--subset`, `--epochs`, best ckpt by val mIoU/acc.
+- The app runs on CPU. Predicted hazard, slope, landform and cost rasters are precomputed; the app only runs A*.
 
 ## How to work with me (Eddie)
 - One milestone at a time; propose a short plan before large changes.
 - After each milestone: tell me exactly what command to run to verify it, then I commit.
-- If an assumption is needed (e.g. cost weights), put it in config.yaml and flag it in your reply.
+- If an assumption is needed (e.g. thresholds, cost weights, split regions), put it in config.yaml and flag it in your reply.

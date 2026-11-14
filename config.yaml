@@ -56,6 +56,7 @@ cost:
   # slope cost = 1 + (slope / slope_scale_deg) ** 2, impassable above max_slope_deg
   slope_scale_deg: 10.0
   max_slope_deg: 25.0       # ASSUMPTION: walking-EVA limit
+  hazard_buffer_m: 5.0      # ASSUMPTION: keep-out margin around impassable cells (rounded to whole routing cells)
   # ASSUMPTION: landform multipliers (null = impassable). Codes per DoMars16k.
   landform_multiplier:
     smo: 1.0   # smooth terrain

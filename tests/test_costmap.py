@@ -9,6 +9,15 @@ def test_slope_cost_values() -> None:
     assert np.isinf(cost[4:]).all()
 
 
+def test_hazard_buffer_blocks_neighbours() -> None:
+    slope = np.zeros((7, 7))
+    slope[3, 3] = 30.0
+    cost = slope_cost(slope, scale_deg=10, max_slope_deg=25, buffer_cells=1)
+    assert np.isinf(cost[2:5, 2:5]).all()  # hazard cell + 1-cell ring, diagonals included
+    assert np.isfinite(cost[1, :]).all() and np.isfinite(cost[:, 5:]).all()
+    assert np.isfinite(slope_cost(slope, 10, 25, buffer_cells=0)[2, 2])
+
+
 def test_block_max_keeps_spikes_and_nan() -> None:
     a = np.zeros((10, 11), np.float32)
     a[1, 1] = 30.0

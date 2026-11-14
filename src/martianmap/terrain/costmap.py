@@ -1,6 +1,7 @@
 """Routing grid and cost map."""
 
 import numpy as np
+from scipy.ndimage import binary_dilation
 from skimage.measure import block_reduce
 
 
@@ -19,9 +20,13 @@ def block_mean(a: np.ndarray, factor: int) -> np.ndarray:
     return block_reduce(a[:h, :w], (factor, factor), np.mean)
 
 
-def slope_cost(slope_deg: np.ndarray, scale_deg: float, max_slope_deg: float) -> np.ndarray:
-    """Per-cell cost 1 + (slope/scale)^2; inf (impassable) at >= max_slope_deg or no data."""
+def slope_cost(slope_deg: np.ndarray, scale_deg: float, max_slope_deg: float, buffer_cells: int = 0) -> np.ndarray:
+    """Per-cell cost 1 + (slope/scale)^2; inf (impassable) at >= max_slope_deg or no data,
+    plus a safety buffer of `buffer_cells` around those cells (8-connected)."""
     with np.errstate(invalid="ignore"):
         cost = 1.0 + (slope_deg / scale_deg) ** 2
-        cost[~np.isfinite(slope_deg) | (slope_deg >= max_slope_deg)] = np.inf
+        blocked = ~np.isfinite(slope_deg) | (slope_deg >= max_slope_deg)
+    if buffer_cells > 0:
+        blocked = binary_dilation(blocked, structure=np.ones((3, 3), bool), iterations=buffer_cells)
+    cost[blocked] = np.inf
     return cost

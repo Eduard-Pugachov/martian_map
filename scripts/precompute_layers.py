@@ -123,7 +123,7 @@ def demo_route(cfg: dict, preview_png: bool) -> None:
     slope, dem, cell = g["slope"], g["dem"], float(g["cell_m"])
     transform = Affine(*g["transform"])
     c = cfg["cost"]
-    cost = slope_cost(slope, c["slope_scale_deg"], c["max_slope_deg"])
+    cost = slope_cost(slope, c["slope_scale_deg"], c["max_slope_deg"], round(c["hazard_buffer_m"] / cell))
     start, goal = (tuple(int(v) for v in rowcol(transform, *cfg["route"][k])) for k in ("start_xy", "goal_xy"))
     for name, (r, col) in (("start", start), ("goal", goal)):
         if not (0 <= r < cost.shape[0] and 0 <= col < cost.shape[1]):

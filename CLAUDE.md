@@ -42,10 +42,18 @@ Submission due Sun Nov 15, 2026, 11:59 PM local. A working demo matters more tha
 - HiRISE TRN orthomosaic: `JEZ_hirise_soc_006_orthoMosaic_25cm_Eqc_latTs0_lon0_first.tif` (7.4 GB, same `soc_006`
   production as the DTM). Resample (area average) onto the DTM's 1 m grid with rasterio, reading in windows (never
   load the full 25 cm raster into memory); grids may not align exactly, but no feature matching is needed.
-- CTX: `JEZ_ctx_B_soc_008_orthoMosaic_6m_Eqc_latTs0_lon0.tif` (36 MB, 6 m/px).
+- **Grids line up exactly** (checked Nov 13): DTM 21400×21488 px float32 at 1 m, nodata ≈ -3.4028e38; ortho
+  85600×85952 px uint8 at 0.25 m, nodata 0; identical bounds (x 4577366–4598766, y 1085130–1106618 m).
+  So ortho → 1 m is an exact 4×4 block average (ignore nodata 0), no reprojection. Neither file has overviews.
+- CTX: `JEZ_ctx_B_soc_008_orthoMosaic_6m_Eqc_latTs0_lon0.tif` (36 MB, 6 m/px, 5322×5040, covers more than the DTM).
+- DoMars16k `models.zip` holds PyTorch `.pth` weights: resnet18, resnet50, densenet121, densenet161, vgg16, alexnet.
 - No GDAL command-line tools are installed; use rasterio (Python or its `rio` CLI) for raster work.
 - Slope: Gaussian smooth (σ = 1 px) + Horn 3×3 → effective baseline ≈ 3 m (DTM resolves ~3–5 m features; 1 m is noise).
-- Hazard classes: 0 = safe (< 10°), 1 = caution (10–25°), 2 = hazard (> 25°), 255 = ignore. Hazard is rare → class weights.
+- Hazard classes: 0 = safe (< 10°), 1 = caution (10–25°), 2 = hazard (≥ 25°), 255 = ignore. Hazard is rare → class weights.
+  Measured on the full DTM (Nov 14): 66% of pixels valid; of valid: safe 77.4%, caution 21.2%, hazard 1.40%
+  (≥ 20°: 4.3%, ≥ 30°: 0.4%). Ripple fields on the western floor show up as speckled caution (real slopes, not a seam).
+- Precomputed: `data/processed/slope_deg.tif` (float32, NaN = ignore) and `hazard_labels.tif` (uint8, 255 = ignore),
+  same grid as the DTM. Made by `scripts/precompute_layers.py --layers slope hazard` (~3 min, strip-wise, low RAM).
 - **Splits are spatial blocks, never random tiles:** 1 km blocks, contiguous test and val regions, 300 m buffer dropped
   between splits. The routing demo AOI (~4×4 km) lies inside the test region.
 - Rotations/flips are valid augmentations for the hazard U-Net (slope magnitude doesn't change under rotation).

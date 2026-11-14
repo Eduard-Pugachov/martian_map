@@ -12,6 +12,15 @@ paths:
   dtm_aoi: data/processed/dtm_aoi.tif
   ortho_1m: data/processed/ortho_1m.tif      # 25 cm ortho area-averaged onto the DTM grid
   ctx_aoi: data/processed/ctx_aoi.tif
+  slope: data/processed/slope_deg.tif
+  hazard_labels: data/processed/hazard_labels.tif
+  previews: data/processed/previews
+
+hazard:
+  # Gaussian pre-smooth + Horn 3x3 slope -> effective baseline ~3 m (DTM resolves ~3-5 m features)
+  slope_sigma_px: 1.0
+  # ASSUMPTION: safe < 10 deg <= caution < 25 deg <= hazard (walking EVA). 255 = ignore (near DTM nodata)
+  thresholds_deg: [10.0, 25.0]
 
 aoi:
   # ASSUMPTION: ~10x10 km around the Perseverance landing site / delta front.

@@ -76,6 +76,11 @@ Submission due Sun Nov 15, 2026, 11:59 PM local. A working demo matters more tha
   (safe 0.80 / caution 0.40 / hazard 0.43) at epoch 40 → `checkpoints/hazard_unet_best.pt` (+ `.csv` log).
   Predictions are blobby: big scarps found, fine ripples mostly missed. The model calls the ortho's nodata edge
   a scarp → always mask ortho == 0 (and a small margin) when making predicted-hazard maps.
+  Eval (Nov 14, `scripts/eval_hazard.py`, whole 6×6 km test region, unseen): U-Net mIoU **0.547**
+  (safe 0.86 / caution 0.42 / hazard 0.36, hazard recall 71%) vs gradient baseline 0.288 and always-safe 0.283.
+  Gradient baseline is genuinely weak (oracle-tuned on test: 0.289; fitter verified against brute force).
+  Illumination: **west-facing slopes are much worse** (test hazard IoU 0.14 / recall 48% vs 0.35–0.42 / 60–78%
+  elsewhere; val shows the same). Results: `data/processed/eval/hazard_{test,val}.json`, `previews/eval_*.png`.
 - Landform: try DoMars16k pretrained `models.zip` first, else `timm` resnet50/convnext_tiny fine-tune.
 - Ground U-Net (optional): `smp.Unet("resnet34", encoder_weights="imagenet", classes=4)`.
 - Training scripts are CLI tools (argparse) that run on Colab/Kaggle GPU: AMP, `--subset`, `--epochs`, best ckpt by val mIoU/acc.

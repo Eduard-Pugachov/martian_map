@@ -16,6 +16,16 @@ paths:
   hazard_labels: data/processed/hazard_labels.tif
   previews: data/processed/previews
   route_grid: data/processed/route_grid.npz   # slope (block max) + DEM (block mean) at grid.route_cell_size_m
+  tiles_index: data/processed/tiles.csv       # one row per tile: row, col (1 m px), split, class fractions
+
+tiles:
+  size_px: 512              # 512 m at 1 m/px
+  block_m: 1000             # split blocks on a 1 km grid; block (0, 0) = north-west corner of the DTM
+  buffer_m: 300             # a tile + this margin must touch only its own split's blocks
+  min_valid_frac: 0.5       # drop tiles with less valid (label != 255 and ortho != 0) area
+  # Block ranges [row_start, row_end, col_start, col_end), end exclusive. Everything else = train.
+  test_blocks: [8, 14, 8, 14]   # 6x6 km, contains the whole demo route (delta front + crater floor)
+  val_blocks: [0, 5, 11, 17]    # northern scarps; contiguous, far from test
 
 route:
   # Demo endpoints in map metres (same Eqc CRS as the DTM).

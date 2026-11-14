@@ -56,6 +56,11 @@ Submission due Sun Nov 15, 2026, 11:59 PM local. A working demo matters more tha
   same grid as the DTM. Made by `scripts/precompute_layers.py --layers slope hazard` (~3 min, strip-wise, low RAM).
 - **Splits are spatial blocks, never random tiles:** 1 km blocks, contiguous test and val regions, 300 m buffer dropped
   between splits. The routing demo AOI (~4×4 km) lies inside the test region.
+  Built (Nov 14) by `scripts/make_hazard_tiles.py` → `data/processed/tiles.csv` (index only; read windows from
+  `ortho_1m.tif` + `hazard_labels.tif`): 512 px tiles, train 869 / val 73 / test 81 (85 / 7 / 8% of px),
+  hazard 1.42 / 1.77 / 1.40%. Test blocks rows 8–13 × cols 8–13 hold the whole demo route; val = northern
+  scarps (rows 0–4 × cols 11–16). Train tiles stay ≥ 300 m from the test/val *blocks*, so the whole test
+  block area (not just test tiles) is unseen ground.
 - Rotations/flips are valid augmentations for the hazard U-Net (slope magnitude doesn't change under rotation).
 - **Illumination caveat:** single-image slope depends on sun direction, mixed sun angles across the mosaic, and albedo.
   Always report test IoU stratified by DTM aspect, and state the limitation in the README/app.

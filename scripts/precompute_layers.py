@@ -3,6 +3,7 @@
 Usage:
   python scripts/precompute_layers.py --layers slope hazard --preview   # M1: 1 m slope + hazard labels
   python scripts/precompute_layers.py --layers cost --route --preview   # M2: 5 m routing grid + demo route
+  python scripts/precompute_layers.py --layers ortho                    # M3: 25 cm ortho -> 1 m U-Net input
 """
 
 import argparse
@@ -95,6 +96,25 @@ def preview(cfg: dict, scale: int = 16) -> None:
     print(f"wrote {out}")
 
 
+def ortho_1m(cfg: dict) -> None:
+    """25 cm ortho -> exact block average onto the 1 m DTM grid; a block with any nodata (0) becomes 0."""
+    p = cfg["paths"]
+    out = repo_path(p["ortho_1m"])
+    with rasterio.open(repo_path(p["ortho_raw"])) as src, rasterio.open(repo_path(p["dtm_raw"])) as dtm:
+        f = round(dtm.res[0] / src.res[0])
+        assert src.bounds == dtm.bounds and src.width == dtm.width * f and src.height == dtm.height * f, "ortho/DTM grids differ"
+        meta = dict(driver="GTiff", width=dtm.width, height=dtm.height, count=1, dtype="uint8", nodata=0, crs=dtm.crs,
+                    transform=dtm.transform, tiled=True, blockxsize=512, blockysize=512, compress="deflate")
+        with rasterio.open(out, "w", **meta) as dst:
+            for r0 in tqdm(range(0, dtm.height, STRIP_ROWS), desc="ortho -> 1 m"):
+                n = min(STRIP_ROWS, dtm.height - r0)
+                a = src.read(1, window=Window(0, r0 * f, src.width, n * f)).reshape(n, f, dtm.width, f)
+                img = np.rint(a.mean(axis=(1, 3), dtype=np.float32)).astype(np.uint8)
+                img[(a == 0).any(axis=(1, 3))] = 0
+                dst.write(img, 1, window=Window(0, r0, dtm.width, n))
+    print(f"wrote {out}")
+
+
 def route_grid(cfg: dict) -> None:
     """Downsample 1 m slope (block max) and DTM (block mean) to the routing cell size -> .npz."""
     p = cfg["paths"]
@@ -162,7 +182,7 @@ def demo_route(cfg: dict, preview_png: bool) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--layers", nargs="*", default=[], choices=["slope", "hazard", "cost"])
+    ap.add_argument("--layers", nargs="*", default=[], choices=["slope", "hazard", "cost", "ortho"])
     ap.add_argument("--route", action="store_true", help="route between config route.start_xy and goal_xy")
     ap.add_argument("--preview", action="store_true", help="write downsampled PNGs to data/processed/previews")
     args = ap.parse_args()
@@ -171,6 +191,8 @@ def main() -> None:
         slope_and_hazard(cfg)
         if args.preview:
             preview(cfg)
+    if "ortho" in args.layers:
+        ortho_1m(cfg)
     if "cost" in args.layers:  # cost itself is cheap and computed at route time from the grid's slope
         route_grid(cfg)
     if args.route:

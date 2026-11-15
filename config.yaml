@@ -97,5 +97,18 @@ cost:
                # crater floor is likely a domain-shift artifact (mosaic unlike training CTX), not real mass wasting
   roughness_weight: 0.0     # stretch: roughness cost term, off by default
 
+dtm_free:
+  # DTM-free mode (PLAN §3E): route on U-Net hazard classes instead of DTM slope, compare to the DTM route
+  ckpt: checkpoints/hazard_unet_best.pt
+  pred_map: data/processed/pred_hazard.npz   # 5 m cells over the test region only (the model never saw it)
+  context_px: 256           # extra image read around the region so the model has context at its edge
+  nodata_margin_px: 16      # ASSUMPTION: drop predictions this close to ortho no-data (model calls the edge a scarp)
+  class_costs: [1.0, 3.0, 50.0]   # ASSUMPTION: safe, caution, hazard; hazard high but not impassable (PLAN §3D)
+  overlap_radius_m: 5.0     # route cells within this distance of route T count as overlapping
+  n_random_pairs: 20        # extra fixed pairs inside the test region, for the summary table
+  pair_dist_m: [2000, 6000]
+  seed: 0
+  results: data/processed/eval/route_compare.json
+
 terrain:
   roughness_window_m: 5.0   # ASSUMPTION: window for detrended-elevation std

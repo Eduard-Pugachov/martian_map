@@ -5,6 +5,7 @@ Usage:
   python scripts/precompute_layers.py --layers cost --route --preview   # M2: 5 m routing grid + demo route
   python scripts/precompute_layers.py --layers ortho                    # M3: 25 cm ortho -> 1 m U-Net input
   python scripts/precompute_layers.py --layers landform --route --preview  # M5: landform map + fused-cost route
+  python scripts/precompute_layers.py --layers pred --preview           # M7: U-Net hazard classes, test region, 5 m
 """
 
 import argparse
@@ -16,6 +17,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import rasterio
 from rasterio.windows import Window
+from scipy.ndimage import binary_dilation
+from skimage.measure import block_reduce
 from tqdm import tqdm
 
 import torch
@@ -23,6 +26,7 @@ from matplotlib.colors import LightSource
 from rasterio.transform import Affine, rowcol
 
 from martianmap.config import load_config, repo_path
+from martianmap.models.hazard_unet import load_model, predict_probs
 from martianmap.models.landform import CLASSES as LANDFORM_CLASSES
 from martianmap.models.landform import UNKNOWN, landform_cell_probs, load_domars, sample_to_grid
 from martianmap.terrain.costmap import block_max, block_mean, buffer_impassable, landform_multiplier, slope_cost
@@ -256,9 +260,41 @@ def demo_route(cfg: dict, preview_png: bool) -> None:
         print(f"wrote {out}")
 
 
+def predicted_hazard(cfg: dict, preview_png: bool) -> None:
+    """Hazard U-Net classes over the test region only (unseen ground), max class per routing cell -> .npz."""
+    p, t, d = cfg["paths"], cfg["tiles"], cfg["dtm_free"]
+    f = round(cfg["grid"]["route_cell_size_m"] / cfg["grid"]["dtm_pixel_size_m"])
+    r0, r1, c0, c1 = (v * t["block_m"] for v in t["test_blocks"])
+    ctx = d["context_px"]
+    with rasterio.open(repo_path(p["ortho_1m"])) as o:
+        r1, c1 = (min(r1, o.height) // f) * f, (min(c1, o.width) // f) * f
+        assert r0 % f == 0 and c0 % f == 0, "test region must start on a routing-cell boundary"
+        cr0, cc0, cr1, cc1 = max(r0 - ctx, 0), max(c0 - ctx, 0), min(r1 + ctx, o.height), min(c1 + ctx, o.width)
+        img = o.read(1, window=Window(cc0, cr0, cc1 - cc0, cr1 - cr0))
+        transform = o.transform
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    probs = predict_probs(load_model(repo_path(d["ckpt"]), device), img / 255, device=device)
+    cls = probs.argmax(0).astype(np.uint8)
+    # the model calls the ortho's no-data edge a scarp: drop predictions near it
+    cls[binary_dilation(img == 0, iterations=d["nodata_margin_px"])] = IGNORE
+    inner = cls[r0 - cr0 : r1 - cr0, c0 - cc0 : c1 - cc0]
+    cells = block_reduce(inner, (f, f), np.max)  # same conservative rule as true slope (block max); 255 wins
+    out = repo_path(d["pred_map"])
+    np.savez_compressed(out, cls=cells, row0=r0 // f, col0=c0 // f,
+                        transform=np.array(transform * Affine.translation(c0, r0) * Affine.scale(f))[:6])
+    share = np.bincount(cells[cells != IGNORE], minlength=3) / max((cells != IGNORE).sum(), 1)
+    print(f"wrote {out}  {cells.shape} cells, {100 * (cells != IGNORE).mean():.0f}% predicted; "
+          f"safe {100 * share[0]:.1f}% caution {100 * share[1]:.1f}% hazard {100 * share[2]:.1f}% (5 m cell max)")
+    if preview_png:
+        png = repo_path(p["previews"]) / "pred_hazard.png"
+        plt.imsave(png, np.where(cells == IGNORE, 3, cells), cmap=matplotlib.colors.ListedColormap(
+            ["#2a9d8f", "#e9c46a", "#e63946", "#000000"]), vmin=0, vmax=3)
+        print(f"wrote {png}")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--layers", nargs="*", default=[], choices=["slope", "hazard", "cost", "ortho", "landform"])
+    ap.add_argument("--layers", nargs="*", default=[], choices=["slope", "hazard", "cost", "ortho", "landform", "pred"])
     ap.add_argument("--route", action="store_true", help="route the config demo pairs (route.start_xy/goal_xy and route.landform_demo)")
     ap.add_argument("--preview", action="store_true", help="write downsampled PNGs to data/processed/previews")
     args = ap.parse_args()
@@ -271,6 +307,8 @@ def main() -> None:
         ortho_1m(cfg)
     if "landform" in args.layers:
         landform_layer(cfg, args.preview)
+    if "pred" in args.layers:
+        predicted_hazard(cfg, args.preview)
     if "cost" in args.layers:  # cost itself is cheap and computed at route time from the grid's slope
         route_grid(cfg)
     if args.route:

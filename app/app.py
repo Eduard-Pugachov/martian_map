@@ -103,6 +103,16 @@ CSS = """
 .dark .gradio-container th { color: var(--primary-400) !important; }
 .gradio-container h1 { border-bottom: 3px solid var(--primary-500); padding-bottom: 0.3em; }
 .gradio-container button[role="tab"][aria-selected="true"] { color: var(--primary-600) !important; }
+/* legend under the map: equal columns, one spacing scale (16 px between blocks, 6 px between rows) */
+.legend { margin-top: 16px; font-size: 0.95em; }
+.legend-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px 24px; }
+.legend-title { font-size: 1.2em; font-weight: 700; margin-bottom: 8px; }
+.legend-row { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.sw-slot { width: 28px; flex: none; display: flex; align-items: center; justify-content: center; }
+.sw-box { width: 14px; height: 14px; border: 1px solid #444; }
+.sw-line { width: 28px; height: 5px; border: 1px solid #444; }
+.sw-empty { background: transparent; border: 1px dashed #888; }
+.legend-note { margin-top: 16px; color: #888; }
 /* map: no letterbox padding, just the crater (square image fills the column width) */
 #map { aspect-ratio: 1 / 1; height: auto !important; padding: 0 !important; background: transparent !important; }
 #map > div, #map .image-container, #map .image-frame {
@@ -113,20 +123,17 @@ CSS = """
 
 
 def _swatch(rgb: tuple[int, int, int], shape: str = "box") -> str:
-    """Inline legend swatch: a filled box, or a thick line for routes. Outlined so white stays visible."""
-    size = "width:26px;height:5px" if shape == "line" else "width:14px;height:14px"
-    return (f'<span style="display:inline-block;{size};background:rgb{tuple(rgb)};border:1px solid #444;'
-            f'vertical-align:middle;margin-right:8px"></span>')
+    """Legend swatch in a fixed-width slot (so labels align): a filled box, or a thick line for routes."""
+    return f'<span class="sw-slot"><span class="sw-{shape}" style="background:rgb{tuple(rgb)}"></span></span>'
 
 
 def legend_html() -> str:
     """Colour key for everything drawn on the map (only the landforms present in this region)."""
     def row(sw: str, text: str) -> str:
-        return f'<div style="margin:3px 0">{sw}{text}</div>'
+        return f'<div class="legend-row">{sw}<span>{text}</span></div>'
 
     def section(title: str, rows: list[str]) -> str:
-        return (f'<div style="min-width:200px;flex:1"><div class="legend-title" style="font-weight:700;margin-bottom:4px">'
-                f'{title}</div>{"".join(rows)}</div>')
+        return f'<div class="legend-section"><div class="legend-title">{title}</div>{"".join(rows)}</div>'
 
     lf = B["landform"]
     cmap = colormaps["tab20"]
@@ -136,9 +143,10 @@ def legend_html() -> str:
         rgb = tuple(int(255 * v) for v in cmap(int(i) % 20)[:3])
         mult = CFG["cost"]["landform_multiplier"].get(code, 1.0)
         lf_rows.append(row(_swatch(rgb), f'{LANDFORM_NAMES[code]} (cost x{"impassable" if mult is None else f"{mult:g}"})'))
-    lf_rows.append(row(_swatch((128, 128, 128)), "no colour: low confidence (cost x1)"))
+    lf_rows.append(row('<span class="sw-slot"><span class="sw-box sw-empty"></span></span>',
+                       "no colour: low confidence (cost x1)"))
     return (
-        '<div style="font-size:0.95em;margin-top:8px"><div style="display:flex;flex-wrap:wrap;gap:12px 28px">'
+        '<div class="legend"><div class="legend-grid">'
         + section("Routes", [row(_swatch(COLORS["T"], "line"), "DTM route (true slope)"),
                              row(_swatch(COLORS[RISK_KEY], "line"), "DTM-free route (U-Net, risk-aware)"),
                              row(_swatch(COLORS["P"], "line"), "Plain U-Net route (no risk threshold)")])
@@ -146,7 +154,7 @@ def legend_html() -> str:
         + section("Hazard overlays", [row(_swatch((242, 204, 51)), f"caution ({THRESH[0]:g}-{THRESH[1]:g} deg)"),
                                       row(_swatch((230, 26, 26)), f"hazard (>= {THRESH[1]:g} deg)")])
         + section("Landform overlay", lf_rows)
-        + '</div><div style="color:#888;margin-top:8px">Basemap: hillshade of the elevation model in DTM mode; the orthoimage the '
+        + '</div><div class="legend-note">Basemap: hillshade of the elevation model in DTM mode; the orthoimage the '
           'U-Net sees in DTM-free mode.</div></div>'
     )
 

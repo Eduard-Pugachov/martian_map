@@ -207,52 +207,59 @@ def demo_route(cfg: dict, preview_png: bool) -> None:
     else:
         print(f"no landform map at {lf_path}: slope-only cost")
         cost = slope_only
-    start, goal = (tuple(int(v) for v in rowcol(transform, *cfg["route"][k])) for k in ("start_xy", "goal_xy"))
-    for name, (r, col) in (("start", start), ("goal", goal)):
-        if not (0 <= r < cost.shape[0] and 0 <= col < cost.shape[1]):
-            raise SystemExit(f"{name} {cfg['route'][name + '_xy']} is outside the routing grid")
-    paths = {"slope+landform": least_cost_route(cost, start, goal)} if lf is not None else {}
-    paths |= {"slope only": least_cost_route(slope_only, start, goal), "straight": straight_line(start, goal)}
-    caution = cfg["hazard"]["thresholds_deg"][0]
-    stats = {k: path_stats(v, slope, dem, cost, cell, caution) for k, v in paths.items()}
-    if lf is not None:
-        dunes = [LANDFORM_CLASSES.index(n) for n in ("aec", "ael")]
-        for k, v in paths.items():
-            stats[k]["pct_dunes"] = float(100 * np.isin(lf[v[:, 0], v[:, 1]], dunes).mean())
-    first = next(iter(stats.values()))
-    print(f"\n{'':15s}" + "".join(f"{k:>22s}" for k in first))
-    for k, st in stats.items():
-        print(f"{k:15s}" + "".join(f"{v:22.1f}" for v in st.values()))
-    if not preview_png:
-        return
-    out = repo_path(cfg["paths"]["previews"]) / "route.png"
+    pairs = [("demo", cfg["route"], "route.png")]
+    if "landform_demo" in cfg["route"]:
+        pairs.append(("landform demo", cfg["route"]["landform_demo"], "route_landform.png"))
     shade = LightSource(azdeg=315, altdeg=45).hillshade(np.nan_to_num(dem, nan=np.nanmean(dem)), dx=cell, dy=cell)
     shade[np.isnan(dem)] = np.nan
-    blocked = np.ma.masked_where(np.isfinite(cost), np.ones_like(cost))
-    (r0, c0), (r1, c1) = np.vstack(list(paths.values())).min(0) - 60, np.vstack(list(paths.values())).max(0) + 60
-    fig, ax = plt.subplots(1, 2, figsize=(18, 9))
-    for a, zoom in zip(ax, (False, True)):
-        a.imshow(shade, cmap="gray")
-        a.imshow(blocked, cmap="autumn", alpha=0.6, interpolation="nearest")
-        for (k, pth), style in zip(paths.items(), ("r-", "m-", "c--") if len(paths) == 3 else ("r-", "c--")):
-            a.plot(pth[:, 1], pth[:, 0], style, lw=1.5, label=f"{k}: {stats[k]['length_m']:.0f} m")
-        a.plot(*start[::-1], "go", ms=8)
-        a.plot(*goal[::-1], "b*", ms=12)
-        if zoom:
-            a.set_xlim(max(c0, 0), c1)
-            a.set_ylim(r1, max(r0, 0))
-        a.axis("off")
-    ax[0].set_title(f"{cell:g} m grid; red/orange = impassable (slope >= {c['max_slope_deg']:g} deg, cliff, or no data)")
-    ax[1].legend(loc="lower left")
-    fig.tight_layout()
-    fig.savefig(out, dpi=100)
-    print(f"wrote {out}")
+    for title, ends, png in pairs:
+        start, goal = (tuple(int(v) for v in rowcol(transform, *ends[k])) for k in ("start_xy", "goal_xy"))
+        for name, (r, col) in (("start", start), ("goal", goal)):
+            if not (0 <= r < cost.shape[0] and 0 <= col < cost.shape[1]):
+                raise SystemExit(f"{title} {name} {ends[name + '_xy']} is outside the routing grid")
+        paths = {"slope+landform": least_cost_route(cost, start, goal)} if lf is not None else {}
+        paths |= {"slope only": least_cost_route(slope_only, start, goal), "straight": straight_line(start, goal)}
+        caution = cfg["hazard"]["thresholds_deg"][0]
+        stats = {k: path_stats(v, slope, dem, cost, cell, caution) for k, v in paths.items()}
+        first = next(iter(stats.values()))
+        print(f"\n== {title} route ==\n{'':15s}" + "".join(f"{k:>22s}" for k in first))
+        for k, st in stats.items():
+            print(f"{k:15s}" + "".join(f"{v:22.1f}" for v in st.values()))
+        if lf is not None:
+            print("% of route per landform (unknown = below confidence gate or outside the map):")
+            for k, v in paths.items():
+                ids, n = np.unique(lf[v[:, 0], v[:, 1]], return_counts=True)
+                names = ["unknown" if i == UNKNOWN else LANDFORM_CLASSES[i] for i in ids]
+                print(f"  {k:15s}" + ", ".join(f"{nm} {100 * c_ / len(v):.0f}%" for nm, c_ in sorted(zip(names, n), key=lambda t: -t[1])))
+        if not preview_png:
+            continue
+        out = repo_path(cfg["paths"]["previews"]) / png
+        blocked = np.ma.masked_where(np.isfinite(cost), np.ones_like(cost))
+        (r0, c0), (r1, c1) = np.vstack(list(paths.values())).min(0) - 60, np.vstack(list(paths.values())).max(0) + 60
+        fig, ax = plt.subplots(1, 2, figsize=(18, 9))
+        for a, zoom in zip(ax, (False, True)):
+            a.imshow(shade, cmap="gray")
+            a.imshow(blocked, cmap="autumn", alpha=0.6, interpolation="nearest")
+            for (k, pth), style in zip(paths.items(), ("r-", "m-", "c--") if len(paths) == 3 else ("r-", "c--")):
+                a.plot(pth[:, 1], pth[:, 0], style, lw=1.5, label=f"{k}: {stats[k]['length_m']:.0f} m")
+            a.plot(*start[::-1], "go", ms=8)
+            a.plot(*goal[::-1], "b*", ms=12)
+            if zoom:
+                a.set_xlim(max(c0, 0), c1)
+                a.set_ylim(r1, max(r0, 0))
+            a.axis("off")
+        ax[0].set_title(f"{title}: {cell:g} m grid; red/orange = impassable (slope >= {c['max_slope_deg']:g} deg, cliff, or no data)")
+        ax[1].legend(loc="lower left")
+        fig.tight_layout()
+        fig.savefig(out, dpi=100)
+        plt.close(fig)
+        print(f"wrote {out}")
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--layers", nargs="*", default=[], choices=["slope", "hazard", "cost", "ortho", "landform"])
-    ap.add_argument("--route", action="store_true", help="route between config route.start_xy and goal_xy")
+    ap.add_argument("--route", action="store_true", help="route the config demo pairs (route.start_xy/goal_xy and route.landform_demo)")
     ap.add_argument("--preview", action="store_true", help="write downsampled PNGs to data/processed/previews")
     args = ap.parse_args()
     cfg = load_config()

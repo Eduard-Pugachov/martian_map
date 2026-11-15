@@ -32,6 +32,11 @@ route:
   # Start: Octavia E. Butler landing site, 18.4447N 77.4508E -> x = R*lon, y = R*lat (R = 3,396,190 m)
   start_xy: [4590904, 1093296]
   goal_xy: [4585686, 1097658]   # ASSUMPTION: a point on the western delta near its main channel (~7 km from start)
+  # Second pair (3.6 km, SW crater floor, train area) chosen so the slope-only route crosses a DoMars 'ael' dune
+  # patch: shows the landform term changing a route. Picked by a random search over pairs (not tuned to the weights).
+  landform_demo:
+    start_xy: [4584114, 1090206]
+    goal_xy: [4587558, 1091256]
 
 hazard:
   # Gaussian pre-smooth + Horn 3x3 slope -> effective baseline ~3 m (DTM resolves ~3-5 m features)
@@ -72,23 +77,24 @@ cost:
   slope_scale_deg: 10.0
   max_slope_deg: 25.0       # ASSUMPTION: walking-EVA limit
   hazard_buffer_m: 5.0      # ASSUMPTION: keep-out margin around impassable cells (rounded to whole routing cells)
-  # ASSUMPTION: landform multipliers (null = impassable). Codes per DoMars16k.
+  # ASSUMPTION: every landform multiplier is a placeholder, not tuned (null = impassable).
+  # Codes per the DoMars16k Zenodo record (doi 10.5281/zenodo.4291940); the codes do not match the names' initials.
   landform_multiplier:
     smo: 1.0   # smooth terrain
     tex: 1.3   # textured terrain
     mix: 1.5   # mixed terrain
     rou: 2.5   # rough terrain
     cra: 2.0   # crater
-    sfx: 2.0   # crater field
-    aec: 4.0   # aeolian curved (dunes)
-    ael: 4.0   # aeolian straight (dunes)
+    sfx: 1.2   # crater field; lowered from 2.0: on Jezero it is mostly the flat, easy eastern floor
+    aec: 4.0   # aeolian straight (dunes)
+    ael: 4.0   # aeolian curved (dunes)
     cli: null  # cliff -> impassable
-    fsf: 3.0   # gullies
-    sfe: 3.0   # mass wasting
-    rid: 1.5   # ridge
-    fsg: 1.5   # channel
-    fse: 1.5   # mounds
-    fss: 2.0   # slope streaks
+    fsf: 1.5   # channel
+    sfe: 1.5   # mounds
+    fsg: 3.0   # gullies
+    fse: 2.0   # slope streaks
+    fss: 1.2   # mass wasting; was 2.0 under a wrong "slope streaks" label. The 11% 'fss' on the flat
+               # crater floor is likely a domain-shift artifact (mosaic unlike training CTX), not real mass wasting
   roughness_weight: 0.0     # stretch: roughness cost term, off by default
 
 terrain:

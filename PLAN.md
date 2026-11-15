@@ -135,8 +135,10 @@ DoMars16k's authors already ran a Jezero landform analysis, so we have something
 - **Eval:** test-set accuracy + confusion matrix; qualitative comparison with the Jezero figure in the DoMars16k paper.
 
 ### D. Cost map and routes
-- **Landform multiplier** (both modes): smooth ×1.0, textured ×1.3, mixed ×1.5, rough ×2.5, crater/crater field ×2.0,
-  dunes (aeolian curved/straight) ×4.0, cliff = impassable, gullies/mass wasting ×3.0 (all in `config.yaml`).
+- **Landform multiplier** (both modes, all placeholders in `config.yaml`): smooth ×1.0, textured ×1.3, mixed ×1.5,
+  rough ×2.5, crater ×2.0, crater field ×1.2, dunes ×4.0, cliff = impassable, gullies ×3.0, slope streaks ×2.0,
+  mass wasting ×1.2 (likely domain shift on the floor), channel/mounds ×1.5. DoMars16k codes don't match the names'
+  initials (e.g. `fss` = mass wasting, `fse` = slope streaks): use the Zenodo record's table.
 - **DTM mode:** slope cost `1 + (slope/10)^2`, impassable if > 25°, × landform multiplier.
 - **DTM-free mode:** class cost safe = 1, caution = 3, hazard = 50 (very high, *not* impassable, so a wrong prediction
   can't block every path), × landform multiplier.

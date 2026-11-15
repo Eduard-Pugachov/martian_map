@@ -85,9 +85,12 @@ Submission due Sun Nov 15, 2026, 11:59 PM local. A working demo matters more tha
   ImageNet norm; classes in alphabetical ImageFolder order) → 93.2% on the DoMars16k test split.
   `precompute_layers.py --layers landform` → `landform.npz`: 75×75 cells of 300 m over the DTM, each averaging all
   overlapping 1.2 km windows; cells with max prob < 0.6 are UNKNOWN (multiplier 1.0), which kills low-confidence
-  'cliff' misfires on the flat floor. 61% of cells confident: tex 48%, mix 28%, fss 11%, sfx 10%. 'fss' (slope
-  streaks) on the crater floor looks like domain shift. The landform term does not change the demo route.
-- Landform: try DoMars16k pretrained `models.zip` first, else `timm` resnet50/convnext_tiny fine-tune.
+  'cliff' misfires on the flat floor. 61% of cells confident: tex 48%, mix 28%, fss 11%, sfx 10%. 'fss' (mass
+  wasting) on the crater floor looks like domain shift. The landform term does not change the main demo route;
+  the second pair `route.landform_demo` (3.6 km, SW floor) shows it: slope-only crosses 17% dunes, fused 0%.
+  Class codes per the Zenodo record (doi 10.5281/zenodo.4291940), not the names' initials: aec = aeolian straight,
+  ael = aeolian curved, fsf = channel, sfe = mounds, fsg = gullies, fse = slope streaks, fss = mass wasting.
+  UNKNOWN cells cost ×1.0, cheaper than every class but smooth, so routes can drift into low-confidence cells.
 - Ground U-Net (optional): `smp.Unet("resnet34", encoder_weights="imagenet", classes=4)`.
 - Training scripts are CLI tools (argparse) that run on Colab/Kaggle GPU: AMP, `--subset`, `--epochs`, best ckpt by val mIoU/acc.
 - The app runs on CPU. Predicted hazard, slope, landform and cost rasters are precomputed; the app only runs A*.

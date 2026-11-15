@@ -86,17 +86,50 @@ OVERLAY = {
 }
 
 
-def landform_legend() -> str:
+# Mars burnt red (primary accents only; background and neutrals stay Gradio's defaults)
+BURNT_RED = gr.themes.Color(c50="#fbeee8", c100="#f6d6c8", c200="#edae93", c300="#e2845e", c400="#d4613a",
+                            c500="#b7410e", c600="#9c3610", c700="#7f2c10", c800="#64230f", c900="#4b1b0c",
+                            c950="#2e1007", name="burnt_red")
+THEME = gr.themes.Default(primary_hue=BURNT_RED,
+                          font=[gr.themes.GoogleFont("Playfair Display"), "Georgia", "serif"])
+
+
+def _swatch(rgb: tuple[int, int, int], shape: str = "box") -> str:
+    """Inline legend swatch: a filled box, or a thick line for routes. Outlined so white stays visible."""
+    size = "width:26px;height:5px" if shape == "line" else "width:14px;height:14px"
+    return (f'<span style="display:inline-block;{size};background:rgb{tuple(rgb)};border:1px solid #444;'
+            f'vertical-align:middle;margin-right:8px"></span>')
+
+
+def legend_html() -> str:
+    """Colour key for everything drawn on the map (only the landforms present in this region)."""
+    def row(sw: str, text: str) -> str:
+        return f'<div style="margin:3px 0">{sw}{text}</div>'
+
+    def section(title: str, rows: list[str]) -> str:
+        return f'<div style="margin-bottom:10px"><div style="font-weight:700;margin-bottom:4px">{title}</div>{"".join(rows)}</div>'
+
     lf = B["landform"]
-    present = [LF_CLASSES[i] for i in np.unique(lf[lf != 255])]
     cmap = colormaps["tab20"]
-    items = []
-    for code in present:
-        r, g, b = (int(255 * v) for v in cmap(LF_CLASSES.index(code) % 20)[:3])
+    lf_rows = []
+    for i in np.unique(lf[lf != 255]):
+        code = LF_CLASSES[i]
+        rgb = tuple(int(255 * v) for v in cmap(int(i) % 20)[:3])
         mult = CFG["cost"]["landform_multiplier"].get(code, 1.0)
-        items.append(f'<span style="color:rgb({r},{g},{b})">&#9632;</span> {LANDFORM_NAMES[code]} '
-                     f'(cost x{"impassable" if mult is None else f"{mult:g}"})')
-    return "Landform classes in this region: " + ", ".join(items) + ". Uncoloured = low confidence (cost x1)."
+        lf_rows.append(row(_swatch(rgb), f'{LANDFORM_NAMES[code]} (cost x{"impassable" if mult is None else f"{mult:g}"})'))
+    lf_rows.append(row(_swatch((128, 128, 128)), "no colour: low confidence (cost x1)"))
+    return (
+        '<div style="font-size:0.95em">'
+        + section("Routes", [row(_swatch(COLORS["T"], "line"), "DTM route (true slope)"),
+                             row(_swatch(COLORS[RISK_KEY], "line"), "DTM-free route (U-Net, risk-aware)"),
+                             row(_swatch(COLORS["P"], "line"), "Plain U-Net route (no risk threshold)")])
+        + section("Points", [row(_swatch((40, 220, 40)), "start"), row(_swatch((40, 90, 255)), "goal")])
+        + section("Hazard overlays", [row(_swatch((242, 204, 51)), f"caution ({THRESH[0]:g}-{THRESH[1]:g} deg)"),
+                                      row(_swatch((230, 26, 26)), f"hazard (>= {THRESH[1]:g} deg)")])
+        + section("Landform overlay", lf_rows)
+        + '<div style="color:#666">Basemap: hillshade of the elevation model in DTM mode; the orthoimage the '
+          'U-Net sees in DTM-free mode.</div></div>'
+    )
 
 
 def plan(mode: str, start: tuple[int, int], goal: tuple[int, int], show_plain: bool) -> tuple[dict, pd.DataFrame]:
@@ -236,8 +269,8 @@ called "caution"; the risk-aware route avoids it (max true slope 24.0 deg) for 2
 - A planning aid for exploring ideas, not a safety-certified tool.
 """
 
-with gr.Blocks(title="Martian Map: Jezero") as demo:
-    gr.Markdown("# Martian Map: hazard-aware walking routes in Jezero Crater\n"
+with gr.Blocks(title="A Walk through Jezero Crater") as demo:
+    gr.Markdown("# A Walk through Jezero Crater\n"
                 "Click the map to set a start and a goal, or load the demo route. Switch to DTM-free mode to plan "
                 "from the image alone and compare it with the route from the elevation model.")
     pts = gr.State({"start": None, "goal": None})
@@ -253,11 +286,7 @@ with gr.Blocks(title="Martian Map: Jezero") as demo:
                     demo_btn = gr.Button("Demo route", variant="primary")
                     clear_btn = gr.Button("Clear")
                 status = gr.Markdown()
-                gr.Markdown("**Legend.** Routes: white = DTM route, cyan = DTM-free route, magenta = plain U-Net "
-                            "route. Green square = start, blue square = goal. Hazard overlays: yellow = caution "
-                            f"({THRESH[0]:g}-{THRESH[1]:g} deg), red = hazard (>= {THRESH[1]:g} deg). DTM mode shows "
-                            "a hillshade of the elevation model; DTM-free mode shows the orthoimage the U-Net sees.")
-                gr.Markdown(landform_legend())
+                gr.HTML(legend_html(), label="Legend")
         table = gr.Dataframe(value=EMPTY, interactive=False, label="Route statistics (measured on the true terrain)")
     with gr.Tab("How it works"):
         gr.Markdown(HOW_IT_WORKS)
@@ -271,4 +300,4 @@ with gr.Blocks(title="Martian Map: Jezero") as demo:
     demo.load(update, [mode, overlay, pts, show_plain], outs)
 
 if __name__ == "__main__":
-    demo.launch()
+    demo.launch(theme=THEME)

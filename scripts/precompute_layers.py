@@ -5,7 +5,7 @@ Usage:
   python scripts/precompute_layers.py --layers cost --route --preview   # M2: 5 m routing grid + demo route
   python scripts/precompute_layers.py --layers ortho                    # M3: 25 cm ortho -> 1 m U-Net input
   python scripts/precompute_layers.py --layers landform --route --preview  # M5: landform map + fused-cost route
-  python scripts/precompute_layers.py --layers pred --preview           # M7: U-Net hazard classes, test region, 5 m
+  python scripts/precompute_layers.py --layers pred --preview           # M7: U-Net classes + probs, test/val, 5 m
 """
 
 import argparse
@@ -261,35 +261,41 @@ def demo_route(cfg: dict, preview_png: bool) -> None:
 
 
 def predicted_hazard(cfg: dict, preview_png: bool) -> None:
-    """Hazard U-Net classes over the test region only (unseen ground), max class per routing cell -> .npz."""
+    """Hazard U-Net over the test and val regions (never trained on), per 5 m routing cell: max class and
+    max softmax probability per class (block max, like true slope) -> one .npz per region."""
     p, t, d = cfg["paths"], cfg["tiles"], cfg["dtm_free"]
     f = round(cfg["grid"]["route_cell_size_m"] / cfg["grid"]["dtm_pixel_size_m"])
-    r0, r1, c0, c1 = (v * t["block_m"] for v in t["test_blocks"])
     ctx = d["context_px"]
-    with rasterio.open(repo_path(p["ortho_1m"])) as o:
-        r1, c1 = (min(r1, o.height) // f) * f, (min(c1, o.width) // f) * f
-        assert r0 % f == 0 and c0 % f == 0, "test region must start on a routing-cell boundary"
-        cr0, cc0, cr1, cc1 = max(r0 - ctx, 0), max(c0 - ctx, 0), min(r1 + ctx, o.height), min(c1 + ctx, o.width)
-        img = o.read(1, window=Window(cc0, cr0, cc1 - cc0, cr1 - cr0))
-        transform = o.transform
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    probs = predict_probs(load_model(repo_path(d["ckpt"]), device), img / 255, device=device)
-    cls = probs.argmax(0).astype(np.uint8)
-    # the model calls the ortho's no-data edge a scarp: drop predictions near it
-    cls[binary_dilation(img == 0, iterations=d["nodata_margin_px"])] = IGNORE
-    inner = cls[r0 - cr0 : r1 - cr0, c0 - cc0 : c1 - cc0]
-    cells = block_reduce(inner, (f, f), np.max)  # same conservative rule as true slope (block max); 255 wins
-    out = repo_path(d["pred_map"])
-    np.savez_compressed(out, cls=cells, row0=r0 // f, col0=c0 // f,
-                        transform=np.array(transform * Affine.translation(c0, r0) * Affine.scale(f))[:6])
-    share = np.bincount(cells[cells != IGNORE], minlength=3) / max((cells != IGNORE).sum(), 1)
-    print(f"wrote {out}  {cells.shape} cells, {100 * (cells != IGNORE).mean():.0f}% predicted; "
-          f"safe {100 * share[0]:.1f}% caution {100 * share[1]:.1f}% hazard {100 * share[2]:.1f}% (5 m cell max)")
-    if preview_png:
-        png = repo_path(p["previews"]) / "pred_hazard.png"
-        plt.imsave(png, np.where(cells == IGNORE, 3, cells), cmap=matplotlib.colors.ListedColormap(
-            ["#2a9d8f", "#e9c46a", "#e63946", "#000000"]), vmin=0, vmax=3)
-        print(f"wrote {png}")
+    model = load_model(repo_path(d["ckpt"]), device)
+    for split, out in d["pred_maps"].items():
+        r0, r1, c0, c1 = (v * t["block_m"] for v in t[f"{split}_blocks"])
+        with rasterio.open(repo_path(p["ortho_1m"])) as o:
+            r1, c1 = (min(r1, o.height) // f) * f, (min(c1, o.width) // f) * f
+            assert r0 % f == 0 and c0 % f == 0, f"{split} region must start on a routing-cell boundary"
+            cr0, cc0, cr1, cc1 = max(r0 - ctx, 0), max(c0 - ctx, 0), min(r1 + ctx, o.height), min(c1 + ctx, o.width)
+            img = o.read(1, window=Window(cc0, cr0, cc1 - cc0, cr1 - cr0))
+            transform = o.transform
+        probs = predict_probs(model, img / 255, device=device)
+        cls = probs.argmax(0).astype(np.uint8)
+        # the model calls the ortho's no-data edge a scarp: drop predictions near it
+        masked = binary_dilation(img == 0, iterations=d["nodata_margin_px"])
+        cls[masked] = IGNORE
+        probs[:, masked] = np.nan
+        inner = (slice(r0 - cr0, r1 - cr0), slice(c0 - cc0, c1 - cc0))
+        cells = block_reduce(cls[inner], (f, f), np.max)  # same conservative rule as true slope (block max); 255 wins
+        cell_probs = block_reduce(probs[(slice(None), *inner)], (1, f, f), np.max)  # NaN (masked) wins
+        out = repo_path(out)
+        np.savez_compressed(out, cls=cells, probs=cell_probs.astype(np.float16), row0=r0 // f, col0=c0 // f,
+                            transform=np.array(transform * Affine.translation(c0, r0) * Affine.scale(f))[:6])
+        share = np.bincount(cells[cells != IGNORE], minlength=3) / max((cells != IGNORE).sum(), 1)
+        print(f"{split}: wrote {out}  {cells.shape} cells, {100 * (cells != IGNORE).mean():.0f}% predicted; "
+              f"safe {100 * share[0]:.1f}% caution {100 * share[1]:.1f}% hazard {100 * share[2]:.1f}% (5 m cell max)")
+        if preview_png:
+            png = repo_path(p["previews"]) / f"pred_hazard_{split}.png"
+            plt.imsave(png, np.where(cells == IGNORE, 3, cells), cmap=matplotlib.colors.ListedColormap(
+                ["#2a9d8f", "#e9c46a", "#e63946", "#000000"]), vmin=0, vmax=3)
+            print(f"wrote {png}")
 
 
 def main() -> None:

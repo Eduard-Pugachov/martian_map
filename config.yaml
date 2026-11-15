@@ -100,15 +100,27 @@ cost:
 dtm_free:
   # DTM-free mode (PLAN §3E): route on U-Net hazard classes instead of DTM slope, compare to the DTM route
   ckpt: checkpoints/hazard_unet_best.pt
-  pred_map: data/processed/pred_hazard.npz   # 5 m cells over the test region only (the model never saw it)
+  pred_maps:                # 5 m cells: max class + max softmax per class, regions the model never trained on
+    test: data/processed/pred_hazard.npz
+    val: data/processed/pred_hazard_val.npz
   context_px: 256           # extra image read around the region so the model has context at its edge
   nodata_margin_px: 16      # ASSUMPTION: drop predictions this close to ortho no-data (model calls the edge a scarp)
   class_costs: [1.0, 3.0, 50.0]   # ASSUMPTION: safe, caution, hazard; hazard high but not impassable (PLAN §3D)
+  # Risk-aware rule: a cell counts as hazard if its (5 m max-pooled) p_hazard >= this, else argmax class.
+  # Chosen on val pairs only (compare_routes.py --sweep), then applied once to test. null = argmax only.
+  hazard_prob_threshold: 0.1   # val sweep (100 pairs): crossings 48% vs 51-52% for 0.2, 0.3, argmax
+  t_sweep: [0.1, 0.2, 0.3]
+  max_median_extra_cost_pct: 25.0   # sweep constraint: median extra cost over passable val pairs
+  n_val_pairs: 100          # up to this many fixed-seed val pairs (fewer if the val region can't fit them)
   overlap_radius_m: 5.0     # route cells within this distance of route T count as overlapping
   n_random_pairs: 200       # fixed-seed pairs inside the test region for the summary table (~6 min)
   pair_dist_m: [2000, 6000]
   seed: 0
   results: data/processed/eval/route_compare.json
+  sweep_results: data/processed/eval/route_sweep_val.json
 
 terrain:
   roughness_window_m: 5.0   # ASSUMPTION: window for detrended-elevation std
+
+app:
+  bundle: app/data/layers.npz   # test region (6x6 km) at 5 m: everything the app needs; committed for deployment

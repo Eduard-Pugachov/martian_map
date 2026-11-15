@@ -98,6 +98,16 @@ Submission due Sun Nov 15, 2026, 11:59 PM local. A working demo matters more tha
   200 fixed-seed pairs (2–6 km): P crosses a true hazard on 21.5% of pairs (95% CI 16.4–27.7), L 77.5% (71.2–82.7),
   O 0% (0–1.9); P median extra cost 15.7% when passable (20-pair run said 20%: it held up). Demo pair: P crosses 9 hazard cells (one ~60 m scarp face the U-Net called caution), L crosses 29.
   5 m path overlap is low even for O (median 15%): the floor has many near-equal corridors.
+- Risk-aware DTM-free (Nov 15): `pred_hazard{,_val}.npz` also hold 5 m max-pooled softmax; a cell is hazard if
+  p_hazard >= `dtm_free.hazard_prob_threshold`. t swept on 100 val pairs only (`compare_routes.py --sweep`,
+  `previews/val_t_sweep.png`): crossings P 52%, t=0.1 48%, 0.2/0.3 51%, all extra cost ~23% -> t = 0.1.
+  Val is the hard northern-scarp region; the gain there is within noise. Test, run once with t = 0.1 (200 pairs):
+  crossings 21.5% (16.4–27.7) -> **5.5% (3.1–9.6)**, median extra cost 15.8% -> 15.2%. Demo pair: scarp avoided
+  (0 hazard cells, max 24.0°, +20.5% cost vs T). Per cell on val, p >= 0.1 flags 84% of true hazard vs 62% argmax.
+- App (Nov 15): `app/app.py` (Gradio, CPU, A* only) on `app/data/layers.npz` (13 MB, test region at 5 m, built by
+  `scripts/export_app_data.py`, committed). Tabs: Mission Map (click start/goal, demo button, DTM vs DTM-free mode,
+  overlays, stats on true terrain) and How it works. No emojis in the app (Eddie's rule). Cost maps come from
+  `terrain/compare_routes.build_costs`, shared with the evaluation, so app numbers match `route_compare.json`.
 - Ground U-Net (optional): `smp.Unet("resnet34", encoder_weights="imagenet", classes=4)`.
 - Training scripts are CLI tools (argparse) that run on Colab/Kaggle GPU: AMP, `--subset`, `--epochs`, best ckpt by val mIoU/acc.
 - The app runs on CPU. Predicted hazard, slope, landform and cost rasters are precomputed; the app only runs A*.

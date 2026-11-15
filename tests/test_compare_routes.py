@@ -1,6 +1,16 @@
 import numpy as np
 
-from martianmap.terrain.compare_routes import class_cost, compare, overlap_pct, wilson_ci95
+from martianmap.terrain.compare_routes import class_cost, compare, overlap_pct, risk_classes, wilson_ci95
+
+
+def test_risk_classes_threshold_rule() -> None:
+    cls = np.array([[0, 1, 2, 0, 255, 1]], np.uint8)
+    p = np.array([[0.05, 0.2, 0.9, 0.3, 0.9, np.nan]], np.float16)
+    out = risk_classes(cls, p, 0.2)
+    assert out.tolist() == [[0, 2, 2, 2, 255, 1]]  # >= t -> hazard, < t unchanged, no-data kept, NaN ignored
+    assert cls.tolist() == [[0, 1, 2, 0, 255, 1]]  # input not modified
+    assert class_cost(out, [1.0, 3.0, 50.0])[0, 1] == 50.0
+    assert (risk_classes(cls, p, 0.1) == 2).sum() >= (out == 2).sum()  # lower t never removes hazard
 
 
 def test_wilson_ci95() -> None:

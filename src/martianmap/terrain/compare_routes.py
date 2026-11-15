@@ -3,6 +3,7 @@
 import numpy as np
 from scipy.ndimage import binary_dilation
 
+from martianmap.terrain.costmap import buffer_impassable, slope_cost
 from martianmap.terrain.route import path_stats
 
 
@@ -11,6 +12,36 @@ def class_cost(cls: np.ndarray, class_costs: list[float]) -> np.ndarray:
     lut = np.full(256, np.inf)
     lut[: len(class_costs)] = class_costs
     return lut[cls]
+
+
+def build_costs(slope: np.ndarray, pred: np.ndarray, p_hazard: np.ndarray, mult: np.ndarray, cfg: dict,
+                cell_m: float, thresholds: list[float]) -> tuple[dict[str, np.ndarray], np.ndarray]:
+    """Cost maps T (true slope), O (oracle classes), P (U-Net argmax), L (landform only) and P@t per threshold,
+    all x landform multiplier with the impassable buffer. Also returns the unbuffered true cost for scoring
+    (the buffer is a planning margin, not ground truth)."""
+    c, d = cfg["cost"], cfg["dtm_free"]
+    buf = round(c["hazard_buffer_m"] / cell_m)
+    with np.errstate(invalid="ignore"):
+        oracle = np.where(np.isfinite(slope), np.digitize(slope, cfg["hazard"]["thresholds_deg"]), 255).astype(np.uint8)
+    true = slope_cost(slope, c["slope_scale_deg"], c["max_slope_deg"]) * mult
+    costs = {
+        "T": buffer_impassable(true, buf),
+        "O": buffer_impassable(class_cost(oracle, d["class_costs"]) * mult, buf),
+        "P": buffer_impassable(class_cost(pred, d["class_costs"]) * mult, buf),
+        "L": buffer_impassable(np.where(pred == 255, np.inf, 1.0) * mult, buf),
+    }
+    for t in thresholds:
+        costs[f"P@{t:g}"] = buffer_impassable(class_cost(risk_classes(pred, p_hazard, t), d["class_costs"]) * mult, buf)
+    return costs, true
+
+
+def risk_classes(cls: np.ndarray, p_hazard: np.ndarray, t: float) -> np.ndarray:
+    """Risk-aware classes: hazard (2) wherever p_hazard >= t, else the argmax class. No-data (255) stays
+    no-data; NaN probabilities never trigger."""
+    out = cls.copy()
+    with np.errstate(invalid="ignore"):
+        out[(p_hazard >= t) & (cls != 255)] = 2
+    return out
 
 
 def overlap_pct(path: np.ndarray, ref: np.ndarray, shape: tuple[int, int], radius_cells: int) -> float:

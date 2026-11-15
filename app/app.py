@@ -91,7 +91,25 @@ BURNT_RED = gr.themes.Color(c50="#fbeee8", c100="#f6d6c8", c200="#edae93", c300=
                             c500="#b7410e", c600="#9c3610", c700="#7f2c10", c800="#64230f", c900="#4b1b0c",
                             c950="#2e1007", name="burnt_red")
 THEME = gr.themes.Default(primary_hue=BURNT_RED,
-                          font=[gr.themes.GoogleFont("Playfair Display"), "Georgia", "serif"])
+                          font=[gr.themes.GoogleFont("Playfair Display"), "Georgia", "serif"]).set(
+    block_title_text_color="*primary_600", block_title_text_color_dark="*primary_400",
+    block_label_text_color="*primary_600", block_label_text_color_dark="*primary_400",
+)
+CSS = """
+.gradio-container h1, .gradio-container h2, .gradio-container h3, .legend-title, .gradio-container th {
+    color: var(--primary-600) !important;
+}
+.dark .gradio-container h1, .dark .gradio-container h2, .dark .gradio-container h3, .dark .legend-title,
+.dark .gradio-container th { color: var(--primary-400) !important; }
+.gradio-container h1 { border-bottom: 3px solid var(--primary-500); padding-bottom: 0.3em; }
+.gradio-container button[role="tab"][aria-selected="true"] { color: var(--primary-600) !important; }
+/* map: no letterbox padding, just the crater (square image fills the column width) */
+#map { aspect-ratio: 1 / 1; height: auto !important; padding: 0 !important; background: transparent !important; }
+#map > div, #map .image-container, #map .image-frame {
+    height: 100% !important; min-height: 0 !important; padding: 0 !important; background: transparent !important;
+}
+#map img { width: 100% !important; height: 100% !important; object-fit: contain; display: block; }
+"""
 
 
 def _swatch(rgb: tuple[int, int, int], shape: str = "box") -> str:
@@ -107,7 +125,8 @@ def legend_html() -> str:
         return f'<div style="margin:3px 0">{sw}{text}</div>'
 
     def section(title: str, rows: list[str]) -> str:
-        return f'<div style="margin-bottom:10px"><div style="font-weight:700;margin-bottom:4px">{title}</div>{"".join(rows)}</div>'
+        return (f'<div style="margin-bottom:10px"><div class="legend-title" style="font-weight:700;margin-bottom:4px">'
+                f'{title}</div>{"".join(rows)}</div>')
 
     lf = B["landform"]
     cmap = colormaps["tab20"]
@@ -277,7 +296,7 @@ with gr.Blocks(title="A Walk through Jezero Crater") as demo:
     with gr.Tab("Mission Map"):
         with gr.Row():
             with gr.Column(scale=3):
-                img = gr.Image(type="numpy", interactive=False, show_label=False, height=720)
+                img = gr.Image(type="numpy", interactive=False, show_label=False, elem_id="map")
             with gr.Column(scale=1):
                 mode = gr.Radio([MODE_DTM, MODE_FREE], value=MODE_DTM, label="Mode")
                 overlay = gr.Radio(OVERLAYS, value=OVERLAYS[0], label="Map overlay")
@@ -300,4 +319,4 @@ with gr.Blocks(title="A Walk through Jezero Crater") as demo:
     demo.load(update, [mode, overlay, pts, show_plain], outs)
 
 if __name__ == "__main__":
-    demo.launch(theme=THEME)
+    demo.launch(theme=THEME, css=CSS)

@@ -87,9 +87,9 @@ OVERLAY = {
 
 
 # Mars burnt red (primary accents only; background and neutrals stay Gradio's defaults)
-BURNT_RED = gr.themes.Color(c50="#fbeee8", c100="#f6d6c8", c200="#edae93", c300="#e2845e", c400="#d4613a",
-                            c500="#b7410e", c600="#9c3610", c700="#7f2c10", c800="#64230f", c900="#4b1b0c",
-                            c950="#2e1007", name="burnt_red")
+BURNT_RED = gr.themes.Color(c50="#fdf1eb", c100="#fadccd", c200="#f4b89b", c300="#ec9268", c400="#e2703f",
+                            c500="#cf5420", c600="#b84818", c700="#993b14", c800="#7a2f12", c900="#5c2410",
+                            c950="#3a1609", name="burnt_red")
 THEME = gr.themes.Default(primary_hue=BURNT_RED,
                           font=[gr.themes.GoogleFont("Playfair Display"), "Georgia", "serif"]).set(
     block_title_text_color="*primary_600", block_title_text_color_dark="*primary_400",
@@ -125,7 +125,7 @@ def legend_html() -> str:
         return f'<div style="margin:3px 0">{sw}{text}</div>'
 
     def section(title: str, rows: list[str]) -> str:
-        return (f'<div style="margin-bottom:10px"><div class="legend-title" style="font-weight:700;margin-bottom:4px">'
+        return (f'<div style="min-width:200px;flex:1"><div class="legend-title" style="font-weight:700;margin-bottom:4px">'
                 f'{title}</div>{"".join(rows)}</div>')
 
     lf = B["landform"]
@@ -138,7 +138,7 @@ def legend_html() -> str:
         lf_rows.append(row(_swatch(rgb), f'{LANDFORM_NAMES[code]} (cost x{"impassable" if mult is None else f"{mult:g}"})'))
     lf_rows.append(row(_swatch((128, 128, 128)), "no colour: low confidence (cost x1)"))
     return (
-        '<div style="font-size:0.95em">'
+        '<div style="font-size:0.95em;margin-top:8px"><div style="display:flex;flex-wrap:wrap;gap:12px 28px">'
         + section("Routes", [row(_swatch(COLORS["T"], "line"), "DTM route (true slope)"),
                              row(_swatch(COLORS[RISK_KEY], "line"), "DTM-free route (U-Net, risk-aware)"),
                              row(_swatch(COLORS["P"], "line"), "Plain U-Net route (no risk threshold)")])
@@ -146,7 +146,7 @@ def legend_html() -> str:
         + section("Hazard overlays", [row(_swatch((242, 204, 51)), f"caution ({THRESH[0]:g}-{THRESH[1]:g} deg)"),
                                       row(_swatch((230, 26, 26)), f"hazard (>= {THRESH[1]:g} deg)")])
         + section("Landform overlay", lf_rows)
-        + '<div style="color:#666">Basemap: hillshade of the elevation model in DTM mode; the orthoimage the '
+        + '</div><div style="color:#888;margin-top:8px">Basemap: hillshade of the elevation model in DTM mode; the orthoimage the '
           'U-Net sees in DTM-free mode.</div></div>'
     )
 
@@ -297,6 +297,7 @@ with gr.Blocks(title="A Walk through Jezero Crater") as demo:
         with gr.Row():
             with gr.Column(scale=3):
                 img = gr.Image(type="numpy", interactive=False, show_label=False, elem_id="map")
+                gr.HTML(legend_html())
             with gr.Column(scale=1):
                 mode = gr.Radio([MODE_DTM, MODE_FREE], value=MODE_DTM, label="Mode")
                 overlay = gr.Radio(OVERLAYS, value=OVERLAYS[0], label="Map overlay")
@@ -305,7 +306,6 @@ with gr.Blocks(title="A Walk through Jezero Crater") as demo:
                     demo_btn = gr.Button("Demo route", variant="primary")
                     clear_btn = gr.Button("Clear")
                 status = gr.Markdown()
-                gr.HTML(legend_html(), label="Legend")
         table = gr.Dataframe(value=EMPTY, interactive=False, label="Route statistics (measured on the true terrain)")
     with gr.Tab("How it works"):
         gr.Markdown(HOW_IT_WORKS)

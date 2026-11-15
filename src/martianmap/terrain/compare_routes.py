@@ -22,6 +22,14 @@ def overlap_pct(path: np.ndarray, ref: np.ndarray, shape: tuple[int, int], radiu
     return float(100 * near[path[:, 0], path[:, 1]].mean())
 
 
+def wilson_ci95(k: int, n: int) -> tuple[float, float]:
+    """95% Wilson score interval (in %) for k successes out of n; sane at k = 0 or k = n."""
+    z, p = 1.96, k / n
+    centre = (p + z * z / (2 * n)) / (1 + z * z / n)
+    half = z * np.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / (1 + z * z / n)
+    return 100 * max(centre - half, 0.0), 100 * min(centre + half, 1.0)
+
+
 def compare(path: np.ndarray, ref: np.ndarray, true_cost: np.ndarray, slope: np.ndarray, dem: np.ndarray,
             cell_m: float, thresholds_deg: list[float], radius_cells: int) -> dict[str, float]:
     """Stats of `path` vs the reference (true-DTM) route, all measured on the true cost and true slope.

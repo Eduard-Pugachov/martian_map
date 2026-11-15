@@ -1,6 +1,12 @@
 import numpy as np
 
-from martianmap.terrain.compare_routes import class_cost, compare, overlap_pct
+from martianmap.terrain.compare_routes import class_cost, compare, overlap_pct, wilson_ci95
+
+
+def test_wilson_ci95() -> None:
+    lo, hi = wilson_ci95(4, 20)  # textbook value: 8.1% - 41.6%
+    assert np.isclose(lo, 8.07, atol=0.05) and np.isclose(hi, 41.6, atol=0.05)
+    assert wilson_ci95(0, 50)[0] == 0 and wilson_ci95(50, 50)[1] == 100
 
 
 def test_class_cost_lookup_and_nodata() -> None:

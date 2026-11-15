@@ -105,7 +105,7 @@ dtm_free:
   nodata_margin_px: 16      # ASSUMPTION: drop predictions this close to ortho no-data (model calls the edge a scarp)
   class_costs: [1.0, 3.0, 50.0]   # ASSUMPTION: safe, caution, hazard; hazard high but not impassable (PLAN §3D)
   overlap_radius_m: 5.0     # route cells within this distance of route T count as overlapping
-  n_random_pairs: 20        # extra fixed pairs inside the test region, for the summary table
+  n_random_pairs: 200       # fixed-seed pairs inside the test region for the summary table (~6 min)
   pair_dist_m: [2000, 6000]
   seed: 0
   results: data/processed/eval/route_compare.json

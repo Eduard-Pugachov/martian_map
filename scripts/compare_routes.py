@@ -24,7 +24,7 @@ from tqdm import tqdm
 from martianmap.config import load_config, repo_path
 from martianmap.models.landform import CLASSES as LANDFORM_CLASSES
 from martianmap.models.landform import sample_to_grid
-from martianmap.terrain.compare_routes import class_cost, compare
+from martianmap.terrain.compare_routes import class_cost, compare, wilson_ci95
 from martianmap.terrain.costmap import buffer_impassable, landform_multiplier, slope_cost
 from martianmap.terrain.hazard_labels import IGNORE
 from martianmap.terrain.route import least_cost_route
@@ -83,9 +83,13 @@ def summary(rows: list[dict]) -> dict:
     for k in ROUTES:
         st = [r[k] for r in rows]
         finite = [s["extra_cost_pct"] for s in st if np.isfinite(s["extra_cost_pct"])]
+        crossing = int(sum(s["hazard_cells"] > 0 for s in st))
+        lo, hi = wilson_ci95(crossing, len(st))
         out[k] = {
             "median_overlap_pct": float(np.median([s["overlap_pct"] for s in st])),
-            "pct_pairs_crossing_hazard": float(100 * np.mean([s["hazard_cells"] > 0 for s in st])),
+            "pct_pairs_crossing_hazard": float(100 * crossing / len(st)),
+            "crossing_ci95_lo": lo,
+            "crossing_ci95_hi": hi,
             "mean_hazard_cells": float(np.mean([s["hazard_cells"] for s in st])),
             "pct_pairs_truly_passable": float(100 * len(finite) / len(st)),
             "median_extra_cost_pct_if_passable": float(np.median(finite)) if finite else float("nan"),
